@@ -1,19 +1,119 @@
 
+# HSBC Pulse 收益计算器 - 产品技术文档
+
+## 1. 产品概述
+**HSBC Pulse Calculator** 是一款专为汇丰 Pulse 银联双币钻石信用卡用户设计的收益测算工具。它通过模拟用户的日常消费场景（境外、移动支付、内地餐饮），实时计算“奖赏钱 (RC)”、对应的“亚洲万里通 (Asia Miles)”里程数以及综合回赠率。
+
+**当前版本状态**：
+- **版本号**：v2.1 (Dark Mode Fixed)
+- **核心修复**：修复了在系统深色模式下，输入框背景与文字同为白色导致不可见的问题。
+
+---
+
+## 2. 核心算法与配置 (Business Logic)
+
+计算逻辑基于以下常量配置（见代码 `CONSTANTS` 对象）：
+
+### 2.1 基础回赠 (Base Reward)
+- **比率**：0.4% (即 1X 积分)
+- **适用范围**：所有合格签账。
+- **无上限**。
+
+### 2.2 赏世界 (RYC - Reward Your World)
+- **开关**：可选。
+- **比率**：额外 2% (即额外 5X 积分)。
+- **上限**：每年首 RMB 100,000 签账。
+- **计算逻辑**：`min(总消费, 剩余额度) * 2%`。
+
+### 2.3 移动支付 (Mobile Payments)
+- **开关**：可选。
+- **比率**：额外 2% (即额外 5X 积分)。
+- **上限**：每年首 RMB 80,000 移动支付/二维码签账。
+- **计算逻辑**：`min(移动支付消费, 剩余额度) * 2%`。
+
+### 2.4 内地餐饮 (Mainland Dining)
+- **开关**：可选。
+- **触发门槛**：当月总消费需 $\ge$ RMB 1,200（若未达标，即使有餐饮消费也不计算奖励）。
+- **奖励上限**：每月仅计算首 RMB 2,000 餐饮签账。
+- **比率结构**：
+    - 部分 A (周五六日等): 3% (代码中 `DINING_A_RATE`)
+    - 部分 B (其他): 2% (代码中 `DINING_B_RATE`)
+    - *注：代码中简化处理，通过 cap 限制计算总和。*
+
+### 2.5 汇总换算
+- **RC 总额** = 基础 + 赏世界 + 移动支付 + 餐饮
+- **亚洲万里通** = RC 总额 $\times$ 10
+- **回赠率** = (RC 总额 / 总消费) $\times$ 100%
+
+---
+
+## 3. 交互模式 (User Interaction)
+
+系统提供两种计算模式，逻辑略有不同：
+
+### 3.1 按月模式 (Monthly Mode)
+- **精度**：最高。用户逐月添加消费记录。
+- **扣减逻辑**：
+    - RYC 和 Mobile 的额度（Cap）会随着月份累加而被消耗。前几个月用完后，后续月份不再享受加成。
+    - 餐饮奖励严格判断当月总消费是否 $\ge$ 1200。
+
+### 3.2 按年模式 (Yearly Mode)
+- **精度**：估算。用户输入全年总数。
+- **假设**：
+    - RYC 和 Mobile 直接对比年上限。
+    - 餐饮计算假设平均每月消费。
+    - **强制达标开关 (Force Threshold)**：提供一个开关，允许用户强制假设每月都达到了 1200 元的门槛（即使平均值可能看起来不够），用于模拟“虽然总额少，但我集中在某几个月消费”的场景。
+
+---
+
+## 4. UI/UX 设计规范
+
+### 4.1 视觉风格 (Visual Identity)
+- **主题**：Liquid Glass (液态玻璃拟态) + Apple Style。
+- **配色**：
+    - **品牌色**：汇丰红 (`#db0011`)。
+    - **背景**：
+        - 亮色：浅灰 (`#F5F5F7`) + 动态彩色光斑。
+        - 暗色：纯黑 (`#050505`) + 低饱和度光斑 + 混合模式调整。
+- **动画**：
+    - 背景光斑：`animate-blob` (缓慢变形移动)。
+    - 信用卡：`animate-float` (悬浮呼吸效果)。
+
+### 4.2 核心组件：Pulse Black Card (CSS Art)
+- 纯 CSS 绘制的信用卡 UI。
+- **响应式优化**：
+    - 增加 `whitespace-nowrap` 防止卡号换行。
+    - 调整 Flex 布局防止 Logo 与姓名重叠。
+    - 暗黑模式下增加微弱的白色描边 (`ring-white/10`) 以凸显轮廓。
+
+### 4.3 核心组件：Liquid Input (输入框)
+这是本次修复的重点组件。
+
+- **交互**：
+    - 点击时有光晕聚焦动画。
+    - 支持简易数学运算 (如输入 `200*12` 自动计算)。
+- **深色模式适配 (Dark Mode Fix)**：
+    - **默认状态**：
+        - 亮色：`bg-white/40`
+        - 暗色：`bg-white/5` (透明度极低的白，呈现深灰玻璃感)
+        - 文字：灰色
+    - **聚焦/输入状态**：
+        - 亮色：`bg-white`，文字深灰。
+        - 暗色：`bg-[#1a1a1a]` (深炭灰)，**文字亮白 (`text-gray-100`)**。
+    - *技术注意*：移除了动态拼接字符串的写法，改用完整的 Tailwind 类名，确保 PostCSS 编译时能正确提取样式。
+
+---
+
+## 5. 代码库快照 (Source Code)
+
+以下是当前稳定版代码，包含所有修复：
+
+```javascript
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 
-// ==================== CSS 动画与全局样式注入 ====================
-// 修复核心 1: 强制 html/body 背景色，防止下拉回弹时露出白色底色
+// ==================== CSS 动画注入 ====================
 const GlobalStyles = () => (
   <style>{`
-    html, body {
-      background-color: #F5F5F7;
-      transition: background-color 0.5s ease;
-    }
-    @media (prefers-color-scheme: dark) {
-      html, body {
-        background-color: #000000; /* 纯黑，适配 OLED 屏幕和刘海 */
-      }
-    }
     @keyframes float {
       0% { transform: translateY(0px); }
       50% { transform: translateY(-15px); }
@@ -132,7 +232,7 @@ const PulseBlackCard = () => (
   </div>
 );
 
-// ==================== Liquid Input Component ====================
+// ==================== Liquid Input Component (修复版) ====================
 const LiquidInput = ({ value, onChange, label, subLabel, disabled, placeholder }) => {
   const [displayVal, setDisplayVal] = useState('');
   const [isFocused, setIsFocused] = useState(false);
@@ -160,6 +260,7 @@ const LiquidInput = ({ value, onChange, label, subLabel, disabled, placeholder }
     } catch (e) {}
   };
 
+  // 修复核心：完全拆解动态 class，让 Tailwind 能够扫描到完整的 dark 类名
   const containerClasses = `
     group relative rounded-3xl transition-all duration-500 ease-out w-full border border-transparent
     ${disabled ? 'opacity-40 grayscale cursor-not-allowed' : 'cursor-text'}
@@ -336,45 +437,20 @@ export default function PulseLiquidFixed() {
   const removeMonth = (id) => setMonths(months.filter(m => m.id !== id));
   const updateMonth = (id, field, val) => setMonths(months.map(m => m.id === id ? { ...m, [field]: val } : m));
 
-  // 修复核心 2: 动态注入 theme-color meta 标签，让 Safari 地址栏跟随深色模式变黑
-  useEffect(() => {
-    // 查找或创建 meta 标签
-    let meta = document.querySelector('meta[name="theme-color"]');
-    if (!meta) {
-      meta = document.createElement('meta');
-      meta.name = 'theme-color';
-      document.head.appendChild(meta);
-    }
-
-    // 更新颜色的函数
-    const updateThemeColor = () => {
-      const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      // 深色模式下设为 #000000 (纯黑)，亮色模式下设为 #F5F5F7
-      meta.content = isDark ? '#000000' : '#F5F5F7';
-    };
-
-    // 初始化并添加监听
-    updateThemeColor();
-    const matcher = window.matchMedia('(prefers-color-scheme: dark)');
-    matcher.addEventListener('change', updateThemeColor);
-
-    return () => matcher.removeEventListener('change', updateThemeColor);
-  }, []);
-
   return (
-    <div className="min-h-screen bg-[#F5F5F7] dark:bg-black text-gray-900 dark:text-gray-100 font-sans selection:bg-red-100 dark:selection:bg-red-900 pb-32 overflow-x-hidden relative transition-colors duration-500">
+    <div className="min-h-screen bg-[#F5F5F7] dark:bg-[#050505] text-gray-900 dark:text-gray-100 font-sans selection:bg-red-100 dark:selection:bg-red-900 pb-32 overflow-x-hidden relative transition-colors duration-500">
       <GlobalStyles />
       
-      {/* 动态背景光 (Living Ambient) - 调暗了深色模式下的透明度，使其在纯黑背景下更自然 */}
+      {/* 动态背景光 (Living Ambient) */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
-         <div className="animate-blob absolute top-[-10%] left-[20%] w-[300px] md:w-[800px] h-[300px] md:h-[800px] bg-indigo-300/30 dark:bg-indigo-900/10 rounded-full blur-[80px] md:blur-[120px] mix-blend-multiply dark:mix-blend-screen opacity-70"></div>
-         <div className="animate-blob animation-delay-2000 absolute top-[10%] right-[-10%] w-[250px] md:w-[600px] h-[250px] md:h-[600px] bg-red-200/30 dark:bg-red-900/10 rounded-full blur-[80px] md:blur-[100px] mix-blend-multiply dark:mix-blend-screen opacity-70"></div>
-         <div className="animate-blob animation-delay-4000 absolute bottom-[10%] left-[10%] w-[250px] md:w-[600px] h-[250px] md:h-[600px] bg-purple-200/30 dark:bg-purple-900/10 rounded-full blur-[80px] md:blur-[100px] mix-blend-multiply dark:mix-blend-screen opacity-70"></div>
+         <div className="animate-blob absolute top-[-10%] left-[20%] w-[300px] md:w-[800px] h-[300px] md:h-[800px] bg-indigo-300/30 dark:bg-indigo-900/20 rounded-full blur-[80px] md:blur-[120px] mix-blend-multiply dark:mix-blend-screen opacity-70"></div>
+         <div className="animate-blob animation-delay-2000 absolute top-[10%] right-[-10%] w-[250px] md:w-[600px] h-[250px] md:h-[600px] bg-red-200/30 dark:bg-red-900/20 rounded-full blur-[80px] md:blur-[100px] mix-blend-multiply dark:mix-blend-screen opacity-70"></div>
+         <div className="animate-blob animation-delay-4000 absolute bottom-[10%] left-[10%] w-[250px] md:w-[600px] h-[250px] md:h-[600px] bg-purple-200/30 dark:bg-purple-900/20 rounded-full blur-[80px] md:blur-[100px] mix-blend-multiply dark:mix-blend-screen opacity-70"></div>
       </div>
 
-      {/* 悬浮导航栏 */}
+      {/* 悬浮导航栏 (Floating Island) */}
       <nav className="fixed top-4 md:top-6 left-0 right-0 z-50 px-4 flex justify-center">
-        <div className="bg-white/70 dark:bg-gray-900/70 backdrop-blur-2xl rounded-full shadow-[0_10px_40px_-10px_rgba(0,0,0,0.1)] border border-white/40 dark:border-white/10 pl-4 pr-1.5 py-1.5 md:pl-6 md:pr-2 md:py-2 flex items-center gap-3 md:gap-6 w-full max-w-[360px] md:max-w-max justify-between md:justify-start transition-all duration-300">
+        <div className="bg-white/70 dark:bg-black/70 backdrop-blur-2xl rounded-full shadow-[0_10px_40px_-10px_rgba(0,0,0,0.1)] border border-white/40 dark:border-white/10 pl-4 pr-1.5 py-1.5 md:pl-6 md:pr-2 md:py-2 flex items-center gap-3 md:gap-6 w-full max-w-[360px] md:max-w-max justify-between md:justify-start transition-all duration-300">
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 md:w-8 md:h-8 rounded-full bg-black dark:bg-white flex items-center justify-center text-white dark:text-black shadow-lg">
                <div className="scale-75"><Icons.Diamond /></div>
@@ -406,12 +482,12 @@ export default function PulseLiquidFixed() {
 
       <main className="relative z-10 max-w-4xl mx-auto px-4 pt-28 md:pt-32 space-y-8 md:space-y-12">
         
-        {/* 卡片区 */}
+        {/* 卡片区 (带浮动动画) */}
         <section className="animate-in fade-in slide-in-from-bottom-6 duration-700">
           <PulseBlackCard />
         </section>
 
-        {/* 核心配置 */}
+        {/* 核心配置 (Liquid Glass Panel) */}
         <section className="bg-white/30 dark:bg-white/5 backdrop-blur-xl rounded-[2rem] md:rounded-[2.5rem] p-6 md:p-8 shadow-[0_4px_20px_rgba(0,0,0,0.01)] border border-white/20 dark:border-white/5 transition-colors">
            <h3 className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6 flex items-center gap-2 px-1">
              <Icons.Settings />
@@ -500,7 +576,7 @@ export default function PulseLiquidFixed() {
            )}
         </section>
 
-        {/* 黑色汇总卡片 */}
+        {/* 黑色汇总卡片 (Black Diamond) */}
         <section>
           <div className="relative overflow-hidden rounded-[2rem] md:rounded-[3rem] bg-[#050505] dark:bg-black text-white p-6 md:p-14 shadow-2xl shadow-gray-900/30 dark:shadow-white/5 ring-1 ring-white/10">
              <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-[#db0011]/10 rounded-full blur-[150px] pointer-events-none mix-blend-screen"></div>
@@ -548,3 +624,4 @@ export default function PulseLiquidFixed() {
     </div>
   );
 }
+```
