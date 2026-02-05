@@ -1,6 +1,35 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 
+// ==================== CSS 动画注入 ====================
+const GlobalStyles = () => (
+  <style>{`
+    @keyframes float {
+      0% { transform: translateY(0px); }
+      50% { transform: translateY(-15px); }
+      100% { transform: translateY(0px); }
+    }
+    @keyframes blob {
+      0% { transform: translate(0px, 0px) scale(1); }
+      33% { transform: translate(30px, -50px) scale(1.1); }
+      66% { transform: translate(-20px, 20px) scale(0.9); }
+      100% { transform: translate(0px, 0px) scale(1); }
+    }
+    .animate-float {
+      animation: float 6s ease-in-out infinite;
+    }
+    .animate-blob {
+      animation: blob 7s infinite;
+    }
+    .animation-delay-2000 {
+      animation-delay: 2s;
+    }
+    .animation-delay-4000 {
+      animation-delay: 4s;
+    }
+  `}</style>
+);
+
 // ==================== 常量定义 ====================
 const CONSTANTS = {
   BASE_RATE: 0.004, 
@@ -29,7 +58,7 @@ const Icons = {
 
 // ==================== CSS Art: HSBC Pulse Card ====================
 const PulseBlackCard = () => (
-  <div className="relative w-full aspect-[1.586/1] max-w-[340px] rounded-2xl overflow-hidden shadow-[0_20px_60px_-15px_rgba(0,0,0,0.6)] mx-auto transform hover:scale-[1.02] transition-transform duration-500">
+  <div className="animate-float relative w-full aspect-[1.586/1] max-w-[360px] md:max-w-[400px] rounded-2xl overflow-hidden shadow-[0_25px_60px_-15px_rgba(0,0,0,0.5)] mx-auto ring-1 ring-white/10 dark:shadow-[0_25px_60px_-15px_rgba(255,255,255,0.1)]">
     <div className="absolute inset-0 bg-[#0f0f11]"></div>
     <div className="absolute inset-0 opacity-80" 
          style={{
@@ -40,46 +69,52 @@ const PulseBlackCard = () => (
          }}>
     </div>
     <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/5 to-transparent opacity-50"></div>
-    <div className="relative z-10 p-6 flex flex-col justify-between h-full font-sans">
+    <div className="relative z-10 p-5 md:p-7 flex flex-col justify-between h-full font-sans">
+      
+      {/* Top Row */}
       <div className="flex justify-between items-start">
-        <div className="mt-8 ml-2">
-           <div className="w-12 h-9 rounded bg-gradient-to-br from-[#eecda3] to-[#dbb688] shadow-inner opacity-90"></div>
+        <div className="mt-6 md:mt-8 ml-1 md:ml-2">
+           <div className="w-10 h-7 md:w-14 md:h-10 rounded bg-gradient-to-br from-[#eecda3] to-[#dbb688] shadow-inner opacity-90 border border-white/10"></div>
         </div>
         <div className="text-right">
           <div className="flex items-center justify-end gap-2 mb-1">
-             <div className="relative w-8 h-5">
-                <div className="absolute left-0 top-0 border-l-[10px] border-r-[10px] border-b-[10px] border-l-transparent border-r-transparent border-b-[#db0011]"></div>
-                <div className="absolute right-0 bottom-0 border-l-[10px] border-r-[10px] border-t-[10px] border-l-transparent border-r-transparent border-t-[#db0011]"></div>
+             <div className="relative w-6 h-4 md:w-8 md:h-5">
+                <div className="absolute left-0 top-0 border-l-[8px] md:border-l-[10px] border-r-[8px] md:border-r-[10px] border-b-[8px] md:border-b-[10px] border-l-transparent border-r-transparent border-b-[#db0011]"></div>
+                <div className="absolute right-0 bottom-0 border-l-[8px] md:border-l-[10px] border-r-[8px] md:border-r-[10px] border-t-[8px] md:border-t-[10px] border-l-transparent border-r-transparent border-t-[#db0011]"></div>
              </div>
-             <span className="text-white font-bold text-lg tracking-wide">HSBC</span>
+             <span className="text-white font-bold text-base md:text-lg tracking-wide">HSBC</span>
           </div>
-          <div className="text-[10px] text-gray-400 font-medium tracking-wide flex flex-col items-end">
+          <div className="text-[9px] md:text-[10px] text-gray-400 font-medium tracking-wide flex flex-col items-end">
              <span>Pulse | HKD : RMB</span>
              <div className="flex items-center gap-1 mt-1">
-                <span className="text-white/90 border border-white/30 px-1 rounded-[2px] text-[9px] bg-white/10 backdrop-blur-sm">DIAMOND</span>
+                <span className="text-white/90 border border-white/30 px-1 rounded-[2px] text-[8px] md:text-[9px] bg-white/10 backdrop-blur-sm">DIAMOND</span>
                 <Icons.Wifi />
              </div>
           </div>
         </div>
       </div>
-      <div className="mt-2">
-         <div className="text-xl md:text-2xl text-transparent bg-clip-text bg-gradient-to-b from-gray-100 to-gray-400 font-mono tracking-widest shadow-black drop-shadow-md">
+      
+      {/* Middle Row */}
+      <div className="mt-1 md:mt-2">
+         <div className="text-lg md:text-2xl text-transparent bg-clip-text bg-gradient-to-b from-gray-100 to-gray-400 font-mono tracking-widest shadow-black drop-shadow-md whitespace-nowrap">
            6250 9888 8888 8888
          </div>
-         <div className="flex justify-center gap-1 text-[9px] text-gray-300 font-mono mt-1">
-            <span className="text-[7px] self-center">VALID<br/>THRU</span>
-            <span className="text-sm self-center">12/27</span>
+         <div className="flex justify-center gap-1 text-[8px] md:text-[9px] text-gray-300 font-mono mt-1">
+            <span className="text-[6px] md:text-[7px] self-center">VALID<br/>THRU</span>
+            <span className="text-xs md:text-sm self-center">12/27</span>
          </div>
       </div>
+
+      {/* Bottom Row */}
       <div className="flex justify-between items-end">
-        <div className="text-gray-300 font-mono text-sm tracking-widest uppercase shadow-black drop-shadow-sm">
+        <div className="text-gray-300 font-mono text-xs md:text-sm tracking-widest uppercase shadow-black drop-shadow-sm truncate max-w-[150px]">
           VIC P LEE
         </div>
-        <div className="w-12 h-8 bg-gradient-to-r from-gray-300 via-white to-gray-300 rounded-[4px] flex items-center justify-center skew-x-[-10deg] shadow-lg relative overflow-hidden">
+        <div className="w-10 h-6 md:w-14 md:h-9 bg-gradient-to-r from-gray-300 via-white to-gray-300 rounded-[3px] md:rounded-[4px] flex items-center justify-center skew-x-[-10deg] shadow-lg relative overflow-hidden flex-shrink-0">
              <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/10"></div>
              <div className="flex flex-col items-end leading-none transform skew-x-[10deg] pr-1">
-                <span className="text-[10px] font-bold text-gray-800 italic">UnionPay</span>
-                <span className="text-[8px] font-bold text-gray-800">银联</span>
+                <span className="text-[8px] md:text-[10px] font-bold text-gray-800 italic">UnionPay</span>
+                <span className="text-[6px] md:text-[8px] font-bold text-gray-800">银联</span>
              </div>
         </div>
       </div>
@@ -87,7 +122,7 @@ const PulseBlackCard = () => (
   </div>
 );
 
-// ==================== Liquid Input Component (无边框终极版) ====================
+// ==================== Liquid Input Component (修复版) ====================
 const LiquidInput = ({ value, onChange, label, subLabel, disabled, placeholder }) => {
   const [displayVal, setDisplayVal] = useState('');
   const [isFocused, setIsFocused] = useState(false);
@@ -115,43 +150,57 @@ const LiquidInput = ({ value, onChange, label, subLabel, disabled, placeholder }
     } catch (e) {}
   };
 
+  // 修复核心：完全拆解动态 class，让 Tailwind 能够扫描到完整的 dark 类名
+  const containerClasses = `
+    group relative rounded-3xl transition-all duration-500 ease-out w-full border border-transparent
+    ${disabled ? 'opacity-40 grayscale cursor-not-allowed' : 'cursor-text'}
+    ${isFocused 
+      ? 'bg-white dark:bg-[#1a1a1a] shadow-[0_15px_40px_-10px_rgba(0,0,0,0.1)] translate-y-[-2px] dark:border-white/10' 
+      : 'bg-white/40 dark:bg-white/5 hover:bg-white/60 dark:hover:bg-white/10 shadow-[inset_0_1px_1px_rgba(255,255,255,0.6)] dark:border-white/5'
+    }
+  `;
+
+  const labelClasses = `
+    text-[9px] md:text-[10px] font-bold uppercase tracking-widest transition-colors
+    ${isFocused ? 'text-red-500' : 'text-gray-400 dark:text-gray-500'}
+  `;
+
+  const subLabelClasses = `
+    text-[8px] md:text-[9px] px-1.5 py-0.5 rounded-full font-bold tracking-wide transition-colors
+    ${disabled 
+      ? 'bg-gray-100/50 text-gray-300 dark:bg-gray-800 dark:text-gray-600' 
+      : 'bg-red-50 text-red-500/80 dark:bg-red-900/20 dark:text-red-400'}
+  `;
+
+  const inputSymbolClasses = `
+    text-xl md:text-2xl font-light transition-colors duration-300
+    ${isFocused ? 'text-gray-800 dark:text-gray-100' : 'text-gray-300 dark:text-gray-600'}
+  `;
+
   return (
     <div 
-      className={`
-        group relative rounded-3xl transition-all duration-500 ease-out
-        ${disabled ? 'opacity-40 grayscale cursor-not-allowed' : 'cursor-text'}
-        /* 核心修改：移除所有 border 和 ring，完全使用 shadow 和 bg 混合 */
-        ${isFocused 
-          ? 'bg-white shadow-[0_15px_40px_-10px_rgba(0,0,0,0.1)] translate-y-[-2px]' 
-          : 'bg-white/40 hover:bg-white/60 shadow-[inset_0_1px_1px_rgba(255,255,255,0.6)]'
-        }
-      `}
+      className={containerClasses}
       onClick={() => !disabled && inputRef.current.focus()}
     >
-      {/* 动态光晕背景：仅在Focus时出现，极为柔和 */}
       <div 
         className={`absolute inset-0 rounded-3xl bg-gradient-to-r from-red-500/5 to-purple-500/5 blur-xl transition-opacity duration-700 pointer-events-none 
         ${isFocused ? 'opacity-100' : 'opacity-0'}`} 
       />
 
-      <div className="relative z-10 px-6 py-5 flex flex-col h-26 justify-center">
-        {/* Label Row */}
-        <div className="flex justify-between items-center mb-2">
-          <label className={`text-[10px] font-bold uppercase tracking-widest transition-colors ${isFocused ? 'text-red-500' : 'text-gray-400'}`}>
+      <div className="relative z-10 px-5 py-4 md:px-6 md:py-5 flex flex-col h-24 md:h-26 justify-center">
+        <div className="flex justify-between items-center mb-1 md:mb-2">
+          <label className={labelClasses}>
             {label}
           </label>
           {subLabel && (
-            <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold tracking-wide transition-colors ${
-              disabled ? 'bg-gray-100/50 text-gray-300' : 'bg-red-50 text-red-500/80'
-            }`}>
+            <span className={subLabelClasses}>
               {subLabel}
             </span>
           )}
         </div>
         
-        {/* Input Row */}
         <div className="flex items-center gap-2">
-          <span className={`text-2xl font-light transition-colors duration-300 ${isFocused ? 'text-gray-800' : 'text-gray-300'}`}>¥</span>
+          <span className={inputSymbolClasses}>¥</span>
           <input
             ref={inputRef}
             type="text"
@@ -162,9 +211,11 @@ const LiquidInput = ({ value, onChange, label, subLabel, disabled, placeholder }
             onChange={(e) => setDisplayVal(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && inputRef.current.blur()}
             placeholder="0"
-            // 关键：强制 appearance-none 移除原生样式，outline-none 移除聚焦框
-            className="w-full bg-transparent border-none outline-none ring-0 appearance-none text-3xl font-bold text-gray-800 placeholder-gray-200/80 p-0 m-0 font-mono tracking-tight"
-            style={{ boxShadow: 'none' }} // Double ensure no shadow on input element
+            className={`w-full bg-transparent border-none outline-none ring-0 appearance-none text-2xl md:text-3xl font-bold p-0 m-0 font-mono tracking-tight
+              text-gray-800 dark:text-gray-100
+              placeholder-gray-200/80 dark:placeholder-gray-700
+            `}
+            style={{ boxShadow: 'none' }} 
           />
         </div>
       </div>
@@ -176,12 +227,12 @@ const Toggle = ({ checked, onChange }) => (
   <button
     onClick={() => onChange(!checked)}
     className={`
-      relative w-11 h-6 rounded-full transition-all duration-500 ease-out 
-      ${checked ? 'bg-[#db0011] shadow-[0_2px_8px_rgba(219,0,17,0.4)]' : 'bg-gray-200/80'}
+      relative w-10 h-5 md:w-11 md:h-6 rounded-full transition-all duration-500 ease-out 
+      ${checked ? 'bg-[#db0011] shadow-[0_2px_8px_rgba(219,0,17,0.4)]' : 'bg-gray-200/80 dark:bg-gray-700'}
     `}
   >
     <div className={`
-      absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transform transition-transform duration-500 cubic-bezier(0.2, 0.8, 0.2, 1)
+      absolute top-1 w-3 h-3 md:w-4 md:h-4 rounded-full bg-white shadow-sm transform transition-transform duration-500 cubic-bezier(0.2, 0.8, 0.2, 1)
       ${checked ? 'translate-x-6' : 'translate-x-1'}
     `} />
   </button>
@@ -190,20 +241,20 @@ const Toggle = ({ checked, onChange }) => (
 const ProgressBar = ({ label, used, cap }) => {
   const percentage = Math.min((used / cap) * 100, 100);
   return (
-    <div className="space-y-2">
+    <div className="space-y-1 md:space-y-2">
       <div className="flex justify-between items-end">
-        <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">{label}</span>
-        <span className="text-[10px] font-bold text-white font-mono">{percentage.toFixed(0)}%</span>
+        <span className="text-[9px] md:text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">{label}</span>
+        <span className="text-[9px] md:text-[10px] font-bold text-white font-mono">{percentage.toFixed(0)}%</span>
       </div>
-      <div className="h-1.5 w-full bg-gray-800 rounded-full overflow-hidden">
+      <div className="h-1.5 w-full bg-gray-800 dark:bg-gray-700 rounded-full overflow-hidden">
         <div 
           className="h-full rounded-full transition-all duration-1000 ease-out bg-gradient-to-r from-[#db0011] to-[#ff4d4d] shadow-[0_0_15px_rgba(219,0,17,0.8)] relative" 
           style={{ width: `${percentage}%` }}
         >
         </div>
       </div>
-      <div className="text-right text-[10px] text-gray-500 font-mono tracking-tight">
-        <span className="text-gray-400">{used.toLocaleString()}</span> / {cap.toLocaleString()}
+      <div className="text-right text-[9px] md:text-[10px] text-gray-500 dark:text-gray-400 font-mono tracking-tight">
+        <span className="text-gray-400 dark:text-gray-600">{used.toLocaleString()}</span> / {cap.toLocaleString()}
       </div>
     </div>
   );
@@ -264,7 +315,7 @@ function calculate(mode, activities, inputData) {
   return { totalRc, totalSpend, rcBase, rcRyc, rcMobile, rcDining, rycUsed, mpUsed, diningUsed, asiaMiles: totalRc * CONSTANTS.RC_TO_ASIAMILES, returnRate: totalSpend > 0 ? (totalRc / totalSpend) * 100 : 0 };
 }
 
-export default function PulseLiquidNoBorder() {
+export default function PulseLiquidFixed() {
   const [activeTab, setActiveTab] = useState('monthly');
   const [activities, setActivities] = useState({ ryc: true, mobilePay: true, dining: true });
   const [months, setMonths] = useState([{ id: 1, totalSpend: 0, mobilePaySpend: 0, diningSpend: 0 }]);
@@ -277,34 +328,38 @@ export default function PulseLiquidNoBorder() {
   const updateMonth = (id, field, val) => setMonths(months.map(m => m.id === id ? { ...m, [field]: val } : m));
 
   return (
-    <div className="min-h-screen bg-[#F5F5F7] text-gray-900 font-sans selection:bg-red-100 pb-32">
+    <div className="min-h-screen bg-[#F5F5F7] dark:bg-[#050505] text-gray-900 dark:text-gray-100 font-sans selection:bg-red-100 dark:selection:bg-red-900 pb-32 overflow-x-hidden relative transition-colors duration-500">
+      <GlobalStyles />
       
-      {/* 动态背景光 (Soft Ambient) */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
-         <div className="absolute top-[-20%] left-[10%] w-[1000px] h-[1000px] bg-indigo-200/20 rounded-full blur-[150px] mix-blend-multiply opacity-50"></div>
-         <div className="absolute top-[10%] right-[-10%] w-[800px] h-[800px] bg-red-200/20 rounded-full blur-[150px] mix-blend-multiply opacity-50"></div>
+      {/* 动态背景光 (Living Ambient) */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
+         <div className="animate-blob absolute top-[-10%] left-[20%] w-[300px] md:w-[800px] h-[300px] md:h-[800px] bg-indigo-300/30 dark:bg-indigo-900/20 rounded-full blur-[80px] md:blur-[120px] mix-blend-multiply dark:mix-blend-screen opacity-70"></div>
+         <div className="animate-blob animation-delay-2000 absolute top-[10%] right-[-10%] w-[250px] md:w-[600px] h-[250px] md:h-[600px] bg-red-200/30 dark:bg-red-900/20 rounded-full blur-[80px] md:blur-[100px] mix-blend-multiply dark:mix-blend-screen opacity-70"></div>
+         <div className="animate-blob animation-delay-4000 absolute bottom-[10%] left-[10%] w-[250px] md:w-[600px] h-[250px] md:h-[600px] bg-purple-200/30 dark:bg-purple-900/20 rounded-full blur-[80px] md:blur-[100px] mix-blend-multiply dark:mix-blend-screen opacity-70"></div>
       </div>
 
       {/* 悬浮导航栏 (Floating Island) */}
-      <nav className="fixed top-6 left-0 right-0 z-50 px-4 flex justify-center">
-        <div className="bg-white/70 backdrop-blur-2xl rounded-full shadow-[0_10px_40px_-10px_rgba(0,0,0,0.1)] border border-white/40 pl-6 pr-2 py-2 flex items-center gap-6">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-full bg-black flex items-center justify-center text-white shadow-lg">
+      <nav className="fixed top-4 md:top-6 left-0 right-0 z-50 px-4 flex justify-center">
+        <div className="bg-white/70 dark:bg-black/70 backdrop-blur-2xl rounded-full shadow-[0_10px_40px_-10px_rgba(0,0,0,0.1)] border border-white/40 dark:border-white/10 pl-4 pr-1.5 py-1.5 md:pl-6 md:pr-2 md:py-2 flex items-center gap-3 md:gap-6 w-full max-w-[360px] md:max-w-max justify-between md:justify-start transition-all duration-300">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 md:w-8 md:h-8 rounded-full bg-black dark:bg-white flex items-center justify-center text-white dark:text-black shadow-lg">
                <div className="scale-75"><Icons.Diamond /></div>
             </div>
-            <span className="font-bold text-lg tracking-tight text-gray-900">Pulse <span className="text-[#db0011]">Calculator</span></span>
+            <span className="font-bold text-sm md:text-lg tracking-tight text-gray-900 dark:text-white">
+              HSBC Pulse <span className="text-[#db0011] dark:text-[#ff4d4d]">Calculator</span>
+            </span>
           </div>
           
-          <div className="bg-gray-100/50 p-1 rounded-full flex backdrop-blur-md">
+          <div className="bg-gray-100/50 dark:bg-white/10 p-1 rounded-full flex backdrop-blur-md">
             {['monthly', 'yearly'].map(t => (
               <button 
                 key={t} 
                 onClick={() => setActiveTab(t)} 
                 className={`
-                  px-6 py-2.5 rounded-full text-xs font-bold transition-all duration-300
+                  px-4 py-1.5 md:px-6 md:py-2.5 rounded-full text-[10px] md:text-xs font-bold transition-all duration-300
                   ${activeTab === t 
-                    ? 'bg-white text-black shadow-[0_4px_12px_rgba(0,0,0,0.08)]' 
-                    : 'text-gray-400 hover:text-gray-600'
+                    ? 'bg-white dark:bg-gray-800 text-black dark:text-white shadow-[0_4px_12px_rgba(0,0,0,0.08)]' 
+                    : 'text-gray-400 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-200'
                   }
                 `}
               >
@@ -315,31 +370,31 @@ export default function PulseLiquidNoBorder() {
         </div>
       </nav>
 
-      <main className="relative z-10 max-w-4xl mx-auto px-4 pt-32 space-y-12">
+      <main className="relative z-10 max-w-4xl mx-auto px-4 pt-28 md:pt-32 space-y-8 md:space-y-12">
         
-        {/* 卡片区 */}
+        {/* 卡片区 (带浮动动画) */}
         <section className="animate-in fade-in slide-in-from-bottom-6 duration-700">
           <PulseBlackCard />
         </section>
 
-        {/* 核心配置 (Liquid Glass Panel) - 移除所有 border */}
-        <section className="bg-white/30 backdrop-blur-xl rounded-[2.5rem] p-8 shadow-[0_4px_20px_rgba(0,0,0,0.01)]">
-           <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-6 flex items-center gap-2 px-1">
+        {/* 核心配置 (Liquid Glass Panel) */}
+        <section className="bg-white/30 dark:bg-white/5 backdrop-blur-xl rounded-[2rem] md:rounded-[2.5rem] p-6 md:p-8 shadow-[0_4px_20px_rgba(0,0,0,0.01)] border border-white/20 dark:border-white/5 transition-colors">
+           <h3 className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6 flex items-center gap-2 px-1">
              <Icons.Settings />
              <span>奖励系数配置</span>
            </h3>
-           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4">
               {[
                  { key: 'ryc', label: '赏世界 RYC', sub: '5X 积分 / 年限10万' },
                  { key: 'mobilePay', label: '移动支付', sub: '5X 积分 / 年限8万' },
                  { key: 'dining', label: '内地餐饮', sub: '3%+2% / 月限2千' }
                ].map(item => (
-                 <div key={item.key} className="flex flex-col gap-3 p-5 rounded-[1.5rem] bg-white/40 transition-all hover:bg-white/60 hover:shadow-lg hover:-translate-y-1 duration-300">
+                 <div key={item.key} className="flex flex-col gap-3 p-4 md:p-5 rounded-[1.5rem] bg-white/40 dark:bg-white/5 transition-all hover:bg-white/60 dark:hover:bg-white/10 hover:shadow-lg hover:-translate-y-1 duration-300 border border-transparent hover:border-white/40 dark:hover:border-white/10">
                     <div className="flex justify-between items-start">
-                      <div className="font-bold text-gray-800 text-sm">{item.label}</div>
+                      <div className="font-bold text-gray-800 dark:text-gray-200 text-sm">{item.label}</div>
                       <Toggle checked={activities[item.key]} onChange={v => setActivities({...activities, [item.key]: v})} />
                     </div>
-                    <div className="text-[10px] text-gray-500 font-medium bg-white/30 self-start px-2 py-1 rounded-md">{item.sub}</div>
+                    <div className="text-[10px] text-gray-500 dark:text-gray-400 font-medium bg-white/30 dark:bg-black/20 self-start px-2 py-1 rounded-md">{item.sub}</div>
                  </div>
                ))}
            </div>
@@ -351,15 +406,14 @@ export default function PulseLiquidNoBorder() {
              <div className="space-y-6">
                {months.map((m, idx) => (
                   <div key={m.id} className="relative animate-in slide-in-from-bottom-4 fade-in duration-500">
-                     {/* 容器移除所有 border */}
-                     <div className="bg-white/30 backdrop-blur-2xl rounded-[2.5rem] p-8 shadow-[0_4px_30px_rgba(0,0,0,0.02)] transition-all hover:bg-white/40">
+                     <div className="bg-white/30 dark:bg-white/5 backdrop-blur-2xl rounded-[2rem] md:rounded-[2.5rem] p-6 md:p-8 shadow-[0_4px_30px_rgba(0,0,0,0.02)] transition-all hover:bg-white/40 dark:hover:bg-white/10 border border-white/20 dark:border-white/5">
                         <div className="flex justify-between items-center mb-6 px-1">
-                           <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+                           <span className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">
                              {idx + 1} 月消费详情
                            </span>
-                           <button onClick={() => removeMonth(m.id)} className="text-gray-300 hover:text-red-500 transition-colors p-2"><Icons.Trash /></button>
+                           <button onClick={() => removeMonth(m.id)} className="text-gray-300 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400 transition-colors p-2"><Icons.Trash /></button>
                         </div>
-                        <div className="grid grid-cols-1 md:grid-cols-10 gap-6">
+                        <div className="grid grid-cols-1 md:grid-cols-10 gap-4 md:gap-6">
                            <div className="md:col-span-4"><LiquidInput label="当月总消费" value={m.totalSpend} onChange={v => updateMonth(m.id, 'totalSpend', v)} /></div>
                            <div className="md:col-span-3"><LiquidInput label="餐饮消费" subLabel={activities.dining ? "封顶2k" : null} disabled={!activities.dining} value={m.diningSpend} onChange={v => updateMonth(m.id, 'diningSpend', v)} /></div>
                            <div className="md:col-span-3"><LiquidInput label="移动支付" subLabel={activities.mobilePay ? "封顶8w" : null} disabled={!activities.mobilePay} value={m.mobilePaySpend} onChange={v => updateMonth(m.id, 'mobilePaySpend', v)} /></div>
@@ -367,22 +421,22 @@ export default function PulseLiquidNoBorder() {
                      </div>
                   </div>
                ))}
-               <button onClick={addMonth} className="w-full py-6 rounded-[2.5rem] bg-white/20 border-2 border-dashed border-gray-200 text-gray-400 font-bold hover:bg-white/40 hover:border-gray-300 hover:text-gray-600 transition-all flex items-center justify-center gap-2 group">
-                  <div className="bg-gray-200/50 text-gray-500 rounded-full w-8 h-8 flex items-center justify-center group-hover:bg-gray-300 group-hover:text-gray-700 transition-colors"><Icons.Plus /></div>
+               <button onClick={addMonth} className="w-full py-5 md:py-6 rounded-[2rem] md:rounded-[2.5rem] bg-white/20 dark:bg-white/5 border-2 border-dashed border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-500 font-bold hover:bg-white/40 dark:hover:bg-white/10 hover:border-gray-300 dark:hover:border-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-all flex items-center justify-center gap-2 group">
+                  <div className="bg-gray-200/50 dark:bg-gray-700/50 text-gray-500 dark:text-gray-400 rounded-full w-8 h-8 flex items-center justify-center group-hover:bg-gray-300 dark:group-hover:bg-gray-600 group-hover:text-gray-700 dark:group-hover:text-gray-200 transition-colors"><Icons.Plus /></div>
                   <span>添加更多月份</span>
                </button>
              </div>
            ) : (
-             <div className="bg-white/30 backdrop-blur-2xl rounded-[3rem] p-10 shadow-[0_4px_30px_rgba(0,0,0,0.02)] animate-in fade-in">
-               <div className="flex items-center gap-3 mb-10 px-1">
+             <div className="bg-white/30 dark:bg-white/5 backdrop-blur-2xl rounded-[2rem] md:rounded-[3rem] p-6 md:p-10 shadow-[0_4px_30px_rgba(0,0,0,0.02)] animate-in fade-in border border-white/20 dark:border-white/5">
+               <div className="flex items-center gap-3 mb-8 md:mb-10 px-1">
                  <div className="w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.8)]"></div>
-                 <h3 className="text-sm font-bold text-gray-500 uppercase tracking-widest">年度均摊预估</h3>
+                 <h3 className="text-xs md:text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">年度均摊预估</h3>
                </div>
                
-               <div className="space-y-8">
+               <div className="space-y-6 md:space-y-8">
                   <LiquidInput label="全年总消费" value={yearly.totalSpend} onChange={v => setYearly({...yearly, totalSpend: v})} />
                   
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
                      <LiquidInput label="移动/二维码" subLabel="年限80,000" disabled={!activities.mobilePay} value={yearly.mobilePaySpend} onChange={v => setYearly({...yearly, mobilePaySpend: v})} />
                      
                      <div className="space-y-4">
@@ -393,15 +447,15 @@ export default function PulseLiquidNoBorder() {
                             onClick={() => setYearly({...yearly, forceThreshold: !yearly.forceThreshold})}
                             className={`
                               flex items-center gap-4 p-4 rounded-3xl cursor-pointer transition-all
-                              ${yearly.forceThreshold ? 'bg-blue-50/80' : 'bg-transparent hover:bg-white/30'}
+                              ${yearly.forceThreshold ? 'bg-blue-50/80 dark:bg-blue-900/30' : 'bg-transparent hover:bg-white/30 dark:hover:bg-white/5'}
                             `}
                           >
-                            <div className={`w-6 h-6 rounded-full flex items-center justify-center transition-all ${yearly.forceThreshold ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30' : 'bg-gray-200'}`}>
+                            <div className={`w-6 h-6 rounded-full flex items-center justify-center transition-all flex-shrink-0 ${yearly.forceThreshold ? 'bg-blue-500 text-white shadow-lg shadow-blue-500/30' : 'bg-gray-200 dark:bg-gray-700'}`}>
                               {yearly.forceThreshold && <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M20 6L9 17l-5-5"/></svg>}
                             </div>
                             <div className="flex flex-col">
-                              <span className={`text-sm font-bold transition-colors ${yearly.forceThreshold ? 'text-blue-700' : 'text-gray-500'}`}>假设每月均达标</span>
-                              <span className="text-[10px] text-gray-400">单月消费 ≥ 1200元</span>
+                              <span className={`text-sm font-bold transition-colors ${yearly.forceThreshold ? 'text-blue-700 dark:text-blue-300' : 'text-gray-500 dark:text-gray-400'}`}>假设每月均达标</span>
+                              <span className="text-[10px] text-gray-400 dark:text-gray-500">单月消费 ≥ 1200元</span>
                             </div>
                           </div>
                         )}
@@ -414,42 +468,42 @@ export default function PulseLiquidNoBorder() {
 
         {/* 黑色汇总卡片 (Black Diamond) */}
         <section>
-          <div className="relative overflow-hidden rounded-[3rem] bg-[#050505] text-white p-10 md:p-14 shadow-2xl shadow-gray-900/30">
+          <div className="relative overflow-hidden rounded-[2rem] md:rounded-[3rem] bg-[#050505] dark:bg-black text-white p-6 md:p-14 shadow-2xl shadow-gray-900/30 dark:shadow-white/5 ring-1 ring-white/10">
              <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-[#db0011]/10 rounded-full blur-[150px] pointer-events-none mix-blend-screen"></div>
              
-             <div className="relative z-10 grid grid-cols-1 lg:grid-cols-2 gap-16">
+             <div className="relative z-10 grid grid-cols-1 lg:grid-cols-2 gap-10 md:gap-16">
                <div className="flex flex-col justify-between">
                   <div className="space-y-4">
-                    <div className="text-gray-500 text-xs font-bold uppercase tracking-[0.2em] mb-4">Total Estimated Rewards</div>
-                    <div className="flex items-baseline gap-3">
-                       <span className="text-8xl font-bold tracking-tighter text-white">{result.totalRc.toFixed(0)}</span>
-                       <span className="text-3xl text-gray-600 font-light tracking-tight">.{result.totalRc.toFixed(2).split('.')[1]} <span className="text-xl font-bold text-gray-700">RC</span></span>
+                    <div className="text-gray-500 text-[10px] md:text-xs font-bold uppercase tracking-[0.2em] mb-4">Total Estimated Rewards</div>
+                    <div className="flex items-baseline gap-2 md:gap-3 flex-wrap">
+                       <span className="text-6xl md:text-8xl font-bold tracking-tighter text-white">{result.totalRc.toFixed(0)}</span>
+                       <span className="text-2xl md:text-3xl text-gray-600 font-light tracking-tight">.{result.totalRc.toFixed(2).split('.')[1]} <span className="text-lg md:text-xl font-bold text-gray-700">RC</span></span>
                     </div>
                   </div>
                   
-                  <div className="grid grid-cols-2 gap-6 mt-12 lg:mt-0">
-                     <div className="p-6 rounded-[2rem] bg-white/5 backdrop-blur-sm hover:bg-white/10 transition-colors">
-                       <div className="text-3xl font-bold tracking-tight text-gray-100">{result.asiaMiles.toLocaleString()}</div>
-                       <div className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-2">Asia Miles</div>
+                  <div className="grid grid-cols-2 gap-4 md:gap-6 mt-8 md:mt-12 lg:mt-0">
+                     <div className="p-4 md:p-6 rounded-2xl md:rounded-[2rem] bg-white/5 backdrop-blur-sm hover:bg-white/10 transition-colors">
+                       <div className="text-xl md:text-3xl font-bold tracking-tight text-gray-100">{result.asiaMiles.toLocaleString()}</div>
+                       <div className="text-[9px] md:text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-2">Asia Miles</div>
                      </div>
-                     <div className="p-6 rounded-[2rem] bg-white/5 backdrop-blur-sm hover:bg-white/10 transition-colors">
-                       <div className="text-3xl font-bold tracking-tight text-gray-100">{result.returnRate.toFixed(2)}%</div>
-                       <div className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-2">Return Rate</div>
+                     <div className="p-4 md:p-6 rounded-2xl md:rounded-[2rem] bg-white/5 backdrop-blur-sm hover:bg-white/10 transition-colors">
+                       <div className="text-xl md:text-3xl font-bold tracking-tight text-gray-100">{result.returnRate.toFixed(2)}%</div>
+                       <div className="text-[9px] md:text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-2">Return Rate</div>
                      </div>
                   </div>
                </div>
 
-               <div className="flex flex-col justify-center gap-10 pl-0 lg:pl-10 border-l-0 lg:border-l border-white/5">
-                  <div className="space-y-8">
+               <div className="flex flex-col justify-center gap-8 pl-0 lg:pl-10 border-l-0 lg:border-l border-white/5 pt-8 lg:pt-0 border-t lg:border-t-0 border-white/5">
+                  <div className="space-y-6 md:space-y-8">
                     {activities.ryc && <ProgressBar label="赏世界 (RYC)" used={result.rycUsed} cap={CONSTANTS.RYC_CAP_RMB} />}
                     {activities.mobilePay && <ProgressBar label="移动支付 (Mobile)" used={result.mpUsed} cap={CONSTANTS.MP_CAP_RMB} />}
                     {activities.dining && <ProgressBar label="内地餐饮 (Dining)" used={result.diningUsed} cap={CONSTANTS.DINING_YEARLY_CAP_SPEND} />}
                   </div>
-                  <div className="grid grid-cols-4 gap-4 text-[10px] text-gray-600 pt-8 border-t border-white/5 font-mono uppercase tracking-widest">
-                     <div>Base<br/><span className="text-white text-base tracking-normal">{result.rcBase.toFixed(0)}</span></div>
-                     {activities.ryc && <div>RYC<br/><span className="text-[#ff4d4d] text-base tracking-normal">{result.rcRyc.toFixed(0)}</span></div>}
-                     {activities.mobilePay && <div>Mobile<br/><span className="text-[#ff4d4d] text-base tracking-normal">{result.rcMobile.toFixed(0)}</span></div>}
-                     {activities.dining && <div>Dining<br/><span className="text-orange-400 text-base tracking-normal">{result.rcDining.toFixed(0)}</span></div>}
+                  <div className="grid grid-cols-4 gap-2 md:gap-4 text-[9px] md:text-[10px] text-gray-600 pt-8 border-t border-white/5 font-mono uppercase tracking-widest">
+                     <div>Base<br/><span className="text-white text-sm md:text-base tracking-normal">{result.rcBase.toFixed(0)}</span></div>
+                     {activities.ryc && <div>RYC<br/><span className="text-[#ff4d4d] text-sm md:text-base tracking-normal">{result.rcRyc.toFixed(0)}</span></div>}
+                     {activities.mobilePay && <div>Mobile<br/><span className="text-[#ff4d4d] text-sm md:text-base tracking-normal">{result.rcMobile.toFixed(0)}</span></div>}
+                     {activities.dining && <div>Dining<br/><span className="text-orange-400 text-sm md:text-base tracking-normal">{result.rcDining.toFixed(0)}</span></div>}
                   </div>
                </div>
              </div>
