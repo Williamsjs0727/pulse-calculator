@@ -1198,7 +1198,7 @@ export default function PulseLiquidFixed() {
 
       {/* 悬浮导航栏 */}
       <nav className="fixed top-4 md:top-6 left-0 right-0 z-50 px-4 flex justify-center">
-        <div className="bg-white/70 dark:bg-gray-900/70 backdrop-blur-2xl rounded-[1.4rem] md:rounded-full shadow-[0_10px_40px_-10px_rgba(0,0,0,0.1)] border border-white/40 dark:border-white/10 px-3 py-2 md:px-5 md:py-2.5 flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-3 w-full max-w-[390px] md:max-w-[980px] transition-all duration-300">
+        <div className="bg-white/70 dark:bg-gray-900/70 backdrop-blur-2xl rounded-[1.4rem] md:rounded-full shadow-[0_10px_40px_-10px_rgba(0,0,0,0.1)] border border-white/40 dark:border-white/10 px-3 py-2 md:px-5 md:py-2.5 flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-3 w-full max-w-[360px] md:max-w-[980px] transition-all duration-300">
           <div className="flex items-center justify-center md:justify-start gap-2 min-w-0 w-full md:w-auto">
             <div className="w-7 h-7 md:w-8 md:h-8 rounded-full bg-black dark:bg-white flex items-center justify-center text-white dark:text-black shadow-lg">
                <div className="scale-75"><Icons.Diamond /></div>
@@ -1208,7 +1208,7 @@ export default function PulseLiquidFixed() {
             </span>
           </div>
 
-          <div className="w-full md:w-auto grid grid-cols-1 md:flex items-center gap-2 md:gap-1.5">
+          <div className="w-full md:w-auto flex flex-col md:flex-row items-center gap-2 md:gap-1.5">
             <div className="bg-gray-100/50 dark:bg-white/10 p-1 rounded-full flex backdrop-blur-md w-full md:w-[220px]">
               {['monthly', 'yearly'].map(t => (
                 <button 
@@ -1227,28 +1227,39 @@ export default function PulseLiquidFixed() {
               ))}
             </div>
 
-            <select
-              value={calcMode}
-              onChange={(event) => setCalcMode(event.target.value)}
-              className="rounded-full px-3 py-2 text-[10px] md:text-xs font-bold bg-white/80 dark:bg-black/40 border border-white/40 dark:border-white/10 text-gray-600 dark:text-gray-200 backdrop-blur-md w-full md:w-[116px] text-center"
-            >
-              <option value="reconcile">对账</option>
-              <option value="estimate">估算</option>
-            </select>
+            <div className="w-full md:w-auto flex items-center justify-center gap-2">
+              <div className="relative w-[102px] md:w-[112px]">
+                <div className="rounded-full px-3 py-2 text-[10px] md:text-xs font-bold bg-white/80 dark:bg-black/40 border border-white/40 dark:border-white/10 text-gray-600 dark:text-gray-200 backdrop-blur-md text-center">
+                  {calcMode === 'reconcile' ? '对账' : '估算'}
+                </div>
+                <select
+                  value={calcMode}
+                  onChange={(event) => setCalcMode(event.target.value)}
+                  className="absolute inset-0 opacity-0 cursor-pointer"
+                  aria-label="计算模式"
+                >
+                  <option value="reconcile">对账</option>
+                  <option value="estimate">估算</option>
+                </select>
+                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-500 dark:text-gray-300">▾</span>
+              </div>
 
-            <div className="relative w-full md:w-[132px]">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] md:text-xs font-bold text-gray-500 dark:text-gray-300 pointer-events-none">
-                主题
-              </span>
-              <select
-                value={themeMode}
-                onChange={(event) => setThemeMode(event.target.value)}
-                className="rounded-full pl-11 pr-2.5 py-2 text-[10px] md:text-xs font-bold bg-white/80 dark:bg-black/40 border border-white/40 dark:border-white/10 text-gray-600 dark:text-gray-200 backdrop-blur-md w-full"
-              >
-                <option value="system">自动</option>
-                <option value="dark">深色</option>
-                <option value="light">浅色</option>
-              </select>
+              <div className="relative w-[102px] md:w-[112px]">
+                <div className="rounded-full px-3 py-2 text-[10px] md:text-xs font-bold bg-white/80 dark:bg-black/40 border border-white/40 dark:border-white/10 text-gray-600 dark:text-gray-200 backdrop-blur-md text-center">
+                  主题
+                </div>
+                <select
+                  value={themeMode}
+                  onChange={(event) => setThemeMode(event.target.value)}
+                  className="absolute inset-0 opacity-0 cursor-pointer"
+                  aria-label="主题"
+                >
+                  <option value="system">自动</option>
+                  <option value="dark">深色</option>
+                  <option value="light">浅色</option>
+                </select>
+                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-500 dark:text-gray-300">▾</span>
+              </div>
             </div>
           </div>
         </div>
@@ -1471,7 +1482,7 @@ export default function PulseLiquidFixed() {
              <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-[#db0011]/10 rounded-full blur-[150px] pointer-events-none mix-blend-screen"></div>
              
              <div className="relative z-10 grid grid-cols-1 lg:grid-cols-2 gap-10 md:gap-16">
-               <div className="flex flex-col justify-between">
+               <div className="flex flex-col gap-8">
                  <div className="space-y-4">
                     <div className="text-gray-400 text-base md:text-xl font-bold tracking-tight mb-3">
                       {calcMode === 'reconcile' ? '总奖励（对账） Total Reconciled Rewards' : '总奖励（估算） Total Estimated Rewards'}
@@ -1497,7 +1508,7 @@ export default function PulseLiquidFixed() {
                     </div>
                   </div>
                   
-                  <div className="grid grid-cols-2 gap-4 md:gap-6 mt-8 md:mt-12 lg:mt-0">
+                  <div className="grid grid-cols-2 gap-4 md:gap-6 w-full max-w-[430px]">
                      <div className="p-4 md:p-6 rounded-2xl md:rounded-[2rem] bg-white/5 backdrop-blur-sm hover:bg-white/10 transition-colors">
                        <div className="text-xl md:text-3xl font-bold tracking-tight text-gray-100">{displayedAsiaMiles.toLocaleString()}</div>
                        <div className="text-[9px] md:text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-2">Asia Miles</div>
