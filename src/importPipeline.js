@@ -561,6 +561,64 @@ export const parseCsvStatementText = (text, source = 'csv') => {
   return transactions;
 };
 
+const parseTransactionFromPipeTableLine = (line, source, index) => {
+  if (!line.includes('|')) return null;
+
+  const cells = line
+    .split('|')
+    .map((cell) => cell.trim())
+    .filter(Boolean);
+
+  if (cells.length < 3) return null;
+
+  const isDividerRow = cells.every((cell) => /^:?-{2,}:?$/.test(cell.replace(/\s+/g, '')));
+  if (isDividerRow) return null;
+
+  const normalizedHeaders = cells.map((cell) => normalizeHeader(cell));
+  const headerKeywords = ['date', 'description', 'amount', 'currency', '日期', '商户', '金额', '币种'];
+  if (normalizedHeaders.some((cell) => headerKeywords.includes(cell))) {
+    return null;
+  }
+
+  let amountIndex = -1;
+  for (let i = cells.length - 1; i >= 0; i -= 1) {
+    const parsed = parseAmount(cells[i]);
+    if (parsed === null) continue;
+    if (!/[0-9]/.test(cells[i])) continue;
+    amountIndex = i;
+    break;
+  }
+  if (amountIndex === -1) return null;
+
+  let dateIndex = -1;
+  for (let i = 0; i < cells.length; i += 1) {
+    if (parseDate(cells[i])) {
+      dateIndex = i;
+      break;
+    }
+  }
+
+  const descriptionParts = cells.filter((cell, idx) => {
+    if (idx === amountIndex || idx === dateIndex) return false;
+    if (/^[A-Z]{3}$/i.test(cell)) return false;
+    if (/^:?-{2,}:?$/.test(cell.replace(/\s+/g, ''))) return false;
+    return true;
+  });
+
+  const description = descriptionParts.join(' ').replace(/\s+/g, ' ').trim();
+  if (!description) return null;
+
+  return buildTransaction({
+    rawDate: dateIndex >= 0 ? cells[dateIndex] : '',
+    rawDescription: description,
+    rawAmount: cells[amountIndex],
+    rawCategory: '',
+    rawChannel: description,
+    source,
+    index,
+  });
+};
+
 export const parseTransactionsFromRawText = (rawText, source = 'text') => {
   const lines = rawText
     .split(/\r?\n/)
@@ -574,9 +632,11 @@ export const parseTransactionsFromRawText = (rawText, source = 'text') => {
     .filter(Boolean);
 
   const transactions = [];
+  const consumedLineIndexes = new Set();
   let currentDate = '';
 
   const patterns = [
+    /^(?<date>[A-Za-z]+,\s*\d{1,2}\s+[A-Za-z]{3}\s+\d{4})\s+(?<desc>.+?)\s+(?<amount>[+-]?[\d,]+(?:\.\d{1,2})?)\s*(?<currency>[A-Z]{3})?$/i,
     /^(?<date>\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}(?:[-/]\d{2,4})?)\s+(?<desc>.+?)\s+(?<amount>-?[\d,]+(?:\.\d{1,2})?)$/,
     /^(?<date>\d{4}[年/-]\d{1,2}[月/-]\d{1,2}日?)\s+(?<desc>.+?)\s+(?<amount>-?[\d,]+(?:\.\d{1,2})?)$/,
     /^(?<date>\d{1,2}[-/]\d{1,2}(?:[-/]\d{2,4})?)\s+(?<amount>-?[\d,]+(?:\.\d{1,2})?)\s+(?<desc>.+)$/,
@@ -588,6 +648,16 @@ export const parseTransactionsFromRawText = (rawText, source = 'text') => {
   ];
 
   lines.forEach((line, index) => {
+    const tableTx = parseTransactionFromPipeTableLine(line, source, index);
+    if (tableTx) {
+      transactions.push(tableTx);
+      consumedLineIndexes.add(index);
+    }
+  });
+
+  lines.forEach((line, index) => {
+    if (consumedLineIndexes.has(index)) return;
+
     const possibleDate = parseDate(line);
     const hasAmountToken = /[+-]\s*[\d,]+(?:\.\d{1,2})?\s*(?:CNY|RMB|HKD)?/i.test(line);
     if (possibleDate && !hasAmountToken) {

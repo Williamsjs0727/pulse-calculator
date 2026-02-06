@@ -485,16 +485,11 @@ const SmartImportPanel = ({ onReplaceMonths, onAppendMonths }) => {
 
   return (
     <section className="bg-white/30 dark:bg-white/5 backdrop-blur-2xl rounded-[2rem] md:rounded-[2.5rem] p-6 md:p-8 shadow-[0_4px_30px_rgba(0,0,0,0.02)] border border-white/20 dark:border-white/5 space-y-6">
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-3 xl:items-end">
-        <div className="space-y-1 xl:col-span-8 text-center xl:text-left">
+      <div className="space-y-1 text-center xl:text-left">
           <div className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">智能导入（可选）</div>
           <p className="text-sm text-gray-600 dark:text-gray-300">
             上传 statement（CSV / PDF / 截图）后自动归类，不确定类别交易可人工复审。
           </p>
-        </div>
-        <div className="xl:col-span-4 text-[11px] text-gray-500 dark:text-gray-400 text-center xl:text-right">
-          导入结果会映射到现有“按月输入”，不会移除当前手工功能。
-        </div>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
@@ -518,6 +513,9 @@ const SmartImportPanel = ({ onReplaceMonths, onAppendMonths }) => {
           </button>
           <p className="text-[11px] text-gray-500 dark:text-gray-400">
             建议优先上传 CSV（准确率最高）；PDF 与截图会尝试文本识别。
+          </p>
+          <p className="text-[11px] text-gray-500 dark:text-gray-400">
+            导入结果会映射到现有“按月输入”，不会移除当前手工功能。
           </p>
         </div>
 
@@ -1200,8 +1198,8 @@ export default function PulseLiquidFixed() {
 
       {/* 悬浮导航栏 */}
       <nav className="fixed top-4 md:top-6 left-0 right-0 z-50 px-4 flex justify-center">
-        <div className="bg-white/70 dark:bg-gray-900/70 backdrop-blur-2xl rounded-[1.4rem] md:rounded-full shadow-[0_10px_40px_-10px_rgba(0,0,0,0.1)] border border-white/40 dark:border-white/10 px-3 py-2 md:px-6 md:py-3 flex flex-col items-center gap-2 w-full max-w-[390px] md:max-w-[680px] transition-all duration-300">
-          <div className="flex items-center justify-center gap-2 min-w-0 w-full md:w-auto">
+        <div className="bg-white/70 dark:bg-gray-900/70 backdrop-blur-2xl rounded-[1.4rem] md:rounded-full shadow-[0_10px_40px_-10px_rgba(0,0,0,0.1)] border border-white/40 dark:border-white/10 px-3 py-2 md:px-5 md:py-2.5 flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-3 w-full max-w-[390px] md:max-w-[980px] transition-all duration-300">
+          <div className="flex items-center justify-center md:justify-start gap-2 min-w-0 w-full md:w-auto">
             <div className="w-7 h-7 md:w-8 md:h-8 rounded-full bg-black dark:bg-white flex items-center justify-center text-white dark:text-black shadow-lg">
                <div className="scale-75"><Icons.Diamond /></div>
             </div>
@@ -1210,14 +1208,14 @@ export default function PulseLiquidFixed() {
             </span>
           </div>
 
-          <div className="w-full flex justify-center">
-            <div className="bg-gray-100/50 dark:bg-white/10 p-1 rounded-full flex backdrop-blur-md w-full md:w-[360px]">
+          <div className="w-full md:w-auto grid grid-cols-1 md:flex items-center gap-2 md:gap-1.5">
+            <div className="bg-gray-100/50 dark:bg-white/10 p-1 rounded-full flex backdrop-blur-md w-full md:w-[220px]">
               {['monthly', 'yearly'].map(t => (
                 <button 
                   key={t} 
                   onClick={() => setActiveTab(t)} 
                   className={`
-                    flex-1 px-2.5 py-1.5 md:px-6 md:py-2.5 rounded-full text-[10px] md:text-xs font-bold transition-all duration-300 min-w-0 text-center
+                    flex-1 px-2.5 py-1.5 md:px-5 md:py-2 rounded-full text-[10px] md:text-xs font-bold transition-all duration-300 min-w-0 text-center
                     ${activeTab === t 
                       ? 'bg-white dark:bg-gray-800 text-black dark:text-white shadow-[0_4px_12px_rgba(0,0,0,0.08)]' 
                       : 'text-gray-400 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-200'
@@ -1228,11 +1226,35 @@ export default function PulseLiquidFixed() {
                 </button>
               ))}
             </div>
+
+            <select
+              value={calcMode}
+              onChange={(event) => setCalcMode(event.target.value)}
+              className="rounded-full px-3 py-2 text-[10px] md:text-xs font-bold bg-white/80 dark:bg-black/40 border border-white/40 dark:border-white/10 text-gray-600 dark:text-gray-200 backdrop-blur-md w-full md:w-[116px] text-center"
+            >
+              <option value="reconcile">对账</option>
+              <option value="estimate">估算</option>
+            </select>
+
+            <div className="relative w-full md:w-[132px]">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] md:text-xs font-bold text-gray-500 dark:text-gray-300 pointer-events-none">
+                主题
+              </span>
+              <select
+                value={themeMode}
+                onChange={(event) => setThemeMode(event.target.value)}
+                className="rounded-full pl-11 pr-2.5 py-2 text-[10px] md:text-xs font-bold bg-white/80 dark:bg-black/40 border border-white/40 dark:border-white/10 text-gray-600 dark:text-gray-200 backdrop-blur-md w-full"
+              >
+                <option value="system">自动</option>
+                <option value="dark">深色</option>
+                <option value="light">浅色</option>
+              </select>
+            </div>
           </div>
         </div>
       </nav>
 
-      <main className="relative z-10 max-w-4xl mx-auto px-4 pt-36 md:pt-28 space-y-8 md:space-y-12">
+      <main className="relative z-10 max-w-4xl mx-auto px-4 pt-40 md:pt-32 space-y-8 md:space-y-12">
         
         {/* 卡片区 */}
         <section className="animate-in fade-in slide-in-from-bottom-6 duration-700">
@@ -1242,41 +1264,6 @@ export default function PulseLiquidFixed() {
         <section className="bg-white/30 dark:bg-white/5 backdrop-blur-xl rounded-3xl px-5 py-4 border border-white/20 dark:border-white/10">
           <div className="flex flex-col items-center text-center gap-3">
             <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">计算模式说明</div>
-
-            <div className="w-full max-w-xl grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="relative">
-                <div className="rounded-full px-4 py-2.5 bg-white/75 dark:bg-black/35 border border-white/40 dark:border-white/10 text-sm font-bold text-gray-700 dark:text-gray-200 text-center">
-                  {calcMode === 'reconcile' ? '对账' : '估算'}
-                </div>
-                <select
-                  value={calcMode}
-                  onChange={(event) => setCalcMode(event.target.value)}
-                  className="absolute inset-0 opacity-0 cursor-pointer"
-                  aria-label="计算模式"
-                >
-                  <option value="reconcile">对账</option>
-                  <option value="estimate">估算</option>
-                </select>
-                <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs text-gray-500 dark:text-gray-300">▾</span>
-              </div>
-
-              <div className="relative">
-                <div className="rounded-full px-4 py-2.5 bg-white/75 dark:bg-black/35 border border-white/40 dark:border-white/10 text-sm font-bold text-gray-700 dark:text-gray-200 text-center">
-                  主题
-                </div>
-                <select
-                  value={themeMode}
-                  onChange={(event) => setThemeMode(event.target.value)}
-                  className="absolute inset-0 opacity-0 cursor-pointer"
-                  aria-label="主题"
-                >
-                  <option value="system">自动</option>
-                  <option value="dark">深色</option>
-                  <option value="light">浅色</option>
-                </select>
-                <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs text-gray-500 dark:text-gray-300">▾</span>
-              </div>
-            </div>
 
             <div className="text-sm text-gray-700 dark:text-gray-200 leading-relaxed space-y-1.5 max-w-3xl mx-auto">
               <div>
@@ -1486,7 +1473,7 @@ export default function PulseLiquidFixed() {
              <div className="relative z-10 grid grid-cols-1 lg:grid-cols-2 gap-10 md:gap-16">
                <div className="flex flex-col justify-between">
                  <div className="space-y-4">
-                    <div className="text-gray-500 text-[10px] md:text-xs font-bold uppercase tracking-[0.2em] mb-4">
+                    <div className="text-gray-400 text-base md:text-xl font-bold tracking-tight mb-3">
                       {calcMode === 'reconcile' ? '总奖励（对账） Total Reconciled Rewards' : '总奖励（估算） Total Estimated Rewards'}
                     </div>
                     <div className="text-[10px] text-gray-500">
