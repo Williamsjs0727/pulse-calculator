@@ -129,7 +129,15 @@ const safeString = (value) => {
   return String(value).trim();
 };
 
-const normalizeText = (value) => safeString(value).toUpperCase();
+const normalizeOcrConfusions = (text) =>
+  safeString(text)
+    .toUpperCase()
+    .replace(/UN[LI1]ONPAY/g, 'UNIONPAY')
+    .replace(/QRUN[LI1]ONPAY/g, 'QR UNIONPAY')
+    .replace(/RETU[RNM]/g, 'RETURN')
+    .replace(/MEITUA[MN]/g, 'MEITUAN');
+
+const normalizeText = (value) => normalizeOcrConfusions(value);
 
 const containsAny = (text, keywords) => keywords.some((keyword) => text.includes(keyword));
 
@@ -561,6 +569,98 @@ export const parseCsvStatementText = (text, source = 'csv') => {
   return transactions;
 };
 
+const normalizeOcrLineText = (value) =>
+  safeString(value)
+    .replace(/[｜|]/g, ' ')
+    .replace(/[：]/g, ':')
+    .replace(/[－−—–]/g, '-')
+    .replace(/[＋]/g, '+')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const toOcrLineItems = (ocrData) => {
+  if (Array.isArray(ocrData?.lines) && ocrData.lines.length > 0) {
+    return ocrData.lines
+      .map((line, idx) => {
+        const bbox = line?.bbox || {};
+        const y0 = Number.isFinite(bbox.y0) ? bbox.y0 : idx * 24;
+        const y1 = Number.isFinite(bbox.y1) ? bbox.y1 : y0 + 18;
+        const x0 = Number.isFinite(bbox.x0) ? bbox.x0 : 0;
+        const text = normalizeOcrLineText(line?.text);
+        return { text, y0, y1, x0, idx };
+      })
+      .filter((item) => item.text);
+  }
+
+  if (Array.isArray(ocrData?.words) && ocrData.words.length > 0) {
+    return ocrData.words
+      .map((word, idx) => {
+        const bbox = word?.bbox || {};
+        const y0 = Number.isFinite(bbox.y0) ? bbox.y0 : idx * 10;
+        const y1 = Number.isFinite(bbox.y1) ? bbox.y1 : y0 + 8;
+        const x0 = Number.isFinite(bbox.x0) ? bbox.x0 : idx * 8;
+        const text = normalizeOcrLineText(word?.text);
+        return { text, y0, y1, x0, idx };
+      })
+      .filter((item) => item.text);
+  }
+
+  return [];
+};
+
+const buildRowsFromOcrItems = (items) => {
+  if (!items.length) return [];
+
+  const sorted = [...items].sort((a, b) => {
+    const ay = (a.y0 + a.y1) / 2;
+    const by = (b.y0 + b.y1) / 2;
+    if (Math.abs(ay - by) > 0.5) return ay - by;
+    if (a.x0 !== b.x0) return a.x0 - b.x0;
+    return a.idx - b.idx;
+  });
+
+  const rows = [];
+  sorted.forEach((item) => {
+    const centerY = (item.y0 + item.y1) / 2;
+    const height = Math.max(6, item.y1 - item.y0);
+    const last = rows[rows.length - 1];
+
+    if (last) {
+      const lineThreshold = Math.max(8, Math.min(last.height, height) * 0.7);
+      if (Math.abs(centerY - last.centerY) <= lineThreshold) {
+        last.parts.push(item);
+        last.centerY = (last.centerY + centerY) / 2;
+        last.height = Math.max(last.height, height);
+        return;
+      }
+    }
+
+    rows.push({
+      parts: [item],
+      centerY,
+      height,
+    });
+  });
+
+  return rows
+    .map((row) =>
+      row.parts
+        .sort((a, b) => a.x0 - b.x0)
+        .map((part) => part.text)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+    )
+    .filter(Boolean);
+};
+
+const parseTransactionsFromOcrData = (ocrData, source = 'image-lines') => {
+  const items = toOcrLineItems(ocrData);
+  const rows = buildRowsFromOcrItems(items);
+  if (!rows.length) return [];
+  return parseTransactionsFromRawText(rows.join('\n'), source);
+};
+
 const parseTransactionFromPipeTableLine = (line, source, index) => {
   if (!line.includes('|')) return null;
 
@@ -753,8 +853,15 @@ export const parseImageStatementFile = async (file, sourceTag = 'image') => {
 
   try {
     const result = await worker.recognize(file);
-    const text = result?.data?.text || '';
-    return parseTransactionsFromRawText(text, sourceTag);
+    const ocrData = result?.data || {};
+    const fromStructuredLines = parseTransactionsFromOcrData(ocrData, `${sourceTag}-ocr-lines`);
+    const fromPlainText = parseTransactionsFromRawText(ocrData?.text || '', `${sourceTag}-ocr-text`);
+
+    if (fromStructuredLines.length && fromPlainText.length) {
+      return [...fromStructuredLines, ...fromPlainText];
+    }
+    if (fromStructuredLines.length) return fromStructuredLines;
+    return fromPlainText;
   } finally {
     await worker.terminate();
   }
@@ -958,6 +1065,37 @@ const tokenJaccard = (setA, setB) => {
   return union > 0 ? intersection / union : 0;
 };
 
+const levenshteinDistance = (a, b) => {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+
+  const dp = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+  for (let i = 0; i <= a.length; i += 1) dp[i][0] = i;
+  for (let j = 0; j <= b.length; j += 1) dp[0][j] = j;
+
+  for (let i = 1; i <= a.length; i += 1) {
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost
+      );
+    }
+  }
+
+  return dp[a.length][b.length];
+};
+
+const editSimilarity = (a, b) => {
+  if (!a || !b) return 0;
+  const distance = levenshteinDistance(a, b);
+  const base = Math.max(a.length, b.length);
+  if (!base) return 0;
+  return 1 - distance / base;
+};
+
 const merchantSimilarityScore = (txA, txB) => {
   const keyA = normalizedDescriptionKey(txA.description);
   const keyB = normalizedDescriptionKey(txB.description);
@@ -968,12 +1106,182 @@ const merchantSimilarityScore = (txA, txB) => {
   const jaccard = tokenJaccard(tokensA, tokensB);
   if (jaccard > 0) return jaccard;
 
+  const compactA = merchantKey(txA.description).replace(/\s+/g, '');
+  const compactB = merchantKey(txB.description).replace(/\s+/g, '');
+  const typoSimilarity = editSimilarity(compactA, compactB);
+  if (typoSimilarity >= 0.82) return typoSimilarity;
+
   const rawA = descDedupeKey(txA.description);
   const rawB = descDedupeKey(txB.description);
   if (!rawA || !rawB) return 0;
   if (rawA === rawB) return 0.88;
   if (rawA.includes(rawB) || rawB.includes(rawA)) return 0.66;
   return 0;
+};
+
+const txTimestamp = (tx) => {
+  if (!tx?.date) return null;
+  const date = new Date(tx.date);
+  if (!Number.isFinite(date.getTime())) return null;
+  return date.getTime();
+};
+
+const sameOrNearDate = (txA, txB) => {
+  const dayA = txDayKey(txA);
+  const dayB = txDayKey(txB);
+  if (!dayA || !dayB) return true;
+
+  const at = new Date(dayA).getTime();
+  const bt = new Date(dayB).getTime();
+  if (!Number.isFinite(at) || !Number.isFinite(bt)) return true;
+  const dayDiff = Math.abs(at - bt) / 86400000;
+  return dayDiff <= 1;
+};
+
+const likelySameTransaction = (txA, txB) => {
+  if (Boolean(txA.isRefund) !== Boolean(txB.isRefund)) return false;
+
+  const amountA = Math.abs(txA.signedSpendImpact || 0);
+  const amountB = Math.abs(txB.signedSpendImpact || 0);
+  if (Math.abs(amountA - amountB) > EPSILON) return false;
+
+  if (!sameOrNearDate(txA, txB)) return false;
+
+  const similarity = merchantSimilarityScore(txA, txB);
+  if (similarity >= 0.55) return true;
+
+  const keyA = buildCrossSourceDescriptionKey(txA);
+  const keyB = buildCrossSourceDescriptionKey(txB);
+  if (keyA === keyB && keyA !== 'GENERIC') return true;
+
+  const monthA = txMonthKey(txA);
+  const monthB = txMonthKey(txB);
+  if (keyA === 'GENERIC' && keyB === 'GENERIC' && monthA && monthB && monthA === monthB) {
+    return true;
+  }
+
+  return false;
+};
+
+const sortSourceRowsForSequence = (rows) =>
+  [...rows].sort((a, b) => {
+    const at = txTimestamp(a);
+    const bt = txTimestamp(b);
+
+    if (at !== null && bt !== null && at !== bt) return bt - at;
+    if (at !== null && bt === null) return -1;
+    if (at === null && bt !== null) return 1;
+    return a.__importOrder - b.__importOrder;
+  });
+
+const findSequenceMatches = (rowsA, rowsB) => {
+  const matches = [];
+  let cursorB = 0;
+
+  for (let i = 0; i < rowsA.length; i += 1) {
+    const txA = rowsA[i];
+    let matchedIndex = -1;
+    const searchEnd = Math.min(rowsB.length, cursorB + 8);
+
+    for (let j = cursorB; j < searchEnd; j += 1) {
+      if (likelySameTransaction(txA, rowsB[j])) {
+        matchedIndex = j;
+        break;
+      }
+    }
+
+    if (matchedIndex === -1) continue;
+    matches.push([txA, rowsB[matchedIndex]]);
+    cursorB = matchedIndex + 1;
+  }
+
+  return matches;
+};
+
+const sourceQualityScore = (rows) => {
+  if (!rows.length) return 0;
+  const base = rows.reduce((sum, tx) => sum + qualityScore(tx), 0);
+  const dateBonus = rows.reduce((sum, tx) => sum + (txDayKey(tx) ? 0.5 : txMonthKey(tx) ? 0.2 : 0), 0);
+  return base + dateBonus;
+};
+
+const removeOverlappingScreenshotMatches = (sourceMap) => {
+  const sourceIds = Array.from(sourceMap.keys());
+  if (sourceIds.length <= 1) return { sourceMap, removedCount: 0 };
+
+  const sourceRowsMap = new Map();
+  sourceIds.forEach((sourceId) => {
+    sourceRowsMap.set(sourceId, sortSourceRowsForSequence(sourceMap.get(sourceId) || []));
+  });
+
+  const sourceMeta = new Map();
+  sourceIds.forEach((sourceId) => {
+    const rows = sourceRowsMap.get(sourceId) || [];
+    const minOrder = rows.length ? Math.min(...rows.map((tx) => tx.__importOrder)) : Number.MAX_SAFE_INTEGER;
+    sourceMeta.set(sourceId, {
+      quality: sourceQualityScore(rows),
+      minOrder,
+      size: rows.length,
+    });
+  });
+
+  const removedIds = new Set();
+
+  for (let i = 0; i < sourceIds.length; i += 1) {
+    for (let j = i + 1; j < sourceIds.length; j += 1) {
+      const sourceA = sourceIds[i];
+      const sourceB = sourceIds[j];
+      const rowsA = sourceRowsMap.get(sourceA) || [];
+      const rowsB = sourceRowsMap.get(sourceB) || [];
+      if (rowsA.length < 3 || rowsB.length < 3) continue;
+
+      const matches = findSequenceMatches(rowsA, rowsB);
+      const minSize = Math.min(rowsA.length, rowsB.length);
+      const overlapRatio = minSize > 0 ? matches.length / minSize : 0;
+      const shouldTreatAsOverlap = matches.length >= 3 && overlapRatio >= 0.45;
+      if (!shouldTreatAsOverlap) continue;
+
+      const metaA = sourceMeta.get(sourceA);
+      const metaB = sourceMeta.get(sourceB);
+
+      let dropSource = sourceA;
+      if (metaB.quality > metaA.quality) {
+        dropSource = sourceA;
+      } else if (metaB.quality < metaA.quality) {
+        dropSource = sourceB;
+      } else if (metaA.size > metaB.size) {
+        dropSource = sourceB;
+      } else if (metaA.size < metaB.size) {
+        dropSource = sourceA;
+      } else {
+        dropSource = metaA.minOrder <= metaB.minOrder ? sourceB : sourceA;
+      }
+
+      matches.forEach(([txA, txB]) => {
+        if (dropSource === sourceA) {
+          removedIds.add(txA.id);
+        } else {
+          removedIds.add(txB.id);
+        }
+      });
+    }
+  }
+
+  if (!removedIds.size) return { sourceMap, removedCount: 0 };
+
+  const filtered = new Map();
+  sourceIds.forEach((sourceId) => {
+    const rows = sourceMap.get(sourceId) || [];
+    filtered.set(
+      sourceId,
+      rows.filter((tx) => !removedIds.has(tx.id))
+    );
+  });
+
+  return {
+    sourceMap: filtered,
+    removedCount: removedIds.size,
+  };
 };
 
 const overlapCount = (mapA, mapB) => {
@@ -1111,7 +1419,7 @@ const dedupeTransactions = (transactions) => {
   }
 
   const withOrder = transactions.map((tx, order) => ({ ...tx, __importOrder: order }));
-  const sourceMap = new Map();
+  let sourceMap = new Map();
   withOrder.forEach((tx) => {
     const sourceId = tx.source || 'unknown';
     const list = sourceMap.get(sourceId) || [];
@@ -1119,15 +1427,22 @@ const dedupeTransactions = (transactions) => {
     sourceMap.set(sourceId, list);
   });
 
+  const overlapPrune = removeOverlappingScreenshotMatches(sourceMap);
+  sourceMap = overlapPrune.sourceMap;
+  sourceMap = new Map(Array.from(sourceMap.entries()).filter(([, rows]) => (rows || []).length > 0));
+
   const sourceIds = Array.from(sourceMap.keys());
   if (sourceIds.length <= 1) {
+    const rows = sourceIds.length ? sourceMap.get(sourceIds[0]) || [] : [];
     return {
-      deduped: withOrder.map((item) => {
+      deduped: rows
+        .sort((a, b) => a.__importOrder - b.__importOrder)
+        .map((item) => {
         const cleaned = { ...item };
         delete cleaned.__importOrder;
         return cleaned;
       }),
-      duplicateCount: 0,
+      duplicateCount: overlapPrune.removedCount,
     };
   }
 
@@ -1185,7 +1500,7 @@ const dedupeTransactions = (transactions) => {
   });
 
   const deduped = [];
-  let duplicateCount = 0;
+  let duplicateCount = overlapPrune.removedCount;
 
   components.forEach((component) => {
     if (component.length === 1) {

@@ -1581,7 +1581,7 @@ export default function PulseLiquidFixed() {
                       </div>
                     </div>
                   )}
-                  <div className="grid grid-cols-4 gap-2 md:gap-4 text-[9px] md:text-[10px] text-gray-600 pt-8 border-t border-white/5 font-mono uppercase tracking-widest">
+                  <div className="grid grid-cols-4 gap-2 md:gap-4 text-[9px] md:text-[10px] text-gray-600 pt-8 border-t border-white/5 font-mono uppercase tracking-widest text-center md:text-left justify-items-center md:justify-items-start">
                      <div>Base<br/><span className="text-white text-sm md:text-base tracking-normal">{result.rcBase.toFixed(0)}</span></div>
                      {activities.ryc && <div>RYC<br/><span className="text-[#ff4d4d] text-sm md:text-base tracking-normal">{result.rcRyc.toFixed(0)}</span></div>}
                      {activities.mobilePay && <div>Mobile<br/><span className="text-[#ff4d4d] text-sm md:text-base tracking-normal">{result.rcMobile.toFixed(0)}</span></div>}
