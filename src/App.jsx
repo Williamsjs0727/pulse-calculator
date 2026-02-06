@@ -1,5 +1,14 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import {
+  LOW_CONFIDENCE_THRESHOLD,
+  aggregateTransactionsByMonth,
+  parseCsvStatementFile,
+  parseImageStatementFile,
+  parsePdfStatementFile,
+  prepareImportedTransactions,
+  parseTransactionsFromRawText,
+} from './importPipeline';
 
 // ==================== CSS 动画与全局样式注入 ====================
 // 修复核心 1: 强制 html/body 背景色，防止下拉回弹时露出白色底色
@@ -9,10 +18,8 @@ const GlobalStyles = () => (
       background-color: #F5F5F7;
       transition: background-color 0.5s ease;
     }
-    @media (prefers-color-scheme: dark) {
-      html, body {
-        background-color: #000000; /* 纯黑，适配 OLED 屏幕和刘海 */
-      }
+    html.dark, html.dark body {
+      background-color: #000000; /* 纯黑，适配 OLED 屏幕和刘海 */
     }
     @keyframes float {
       0% { transform: translateY(0px); }
@@ -269,11 +276,402 @@ const ProgressBar = ({ label, used, cap }) => {
   );
 };
 
+const SmartImportPanel = ({ onReplaceMonths, onAppendMonths }) => {
+  const [transactions, setTransactions] = useState([]);
+  const [rawText, setRawText] = useState('');
+  const [statusText, setStatusText] = useState('');
+  const [errorText, setErrorText] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
+  const [showAllForReview, setShowAllForReview] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const monthPreview = useMemo(() => aggregateTransactionsByMonth(transactions), [transactions]);
+  const reviewCount = useMemo(
+    () => transactions.filter((tx) => tx.needsReview).length,
+    [transactions]
+  );
+  const previewReviewRows = useMemo(() => {
+    const sourceRows = showAllForReview ? transactions : transactions.filter((tx) => tx.needsReview);
+    return sourceRows;
+  }, [transactions, showAllForReview]);
+
+  const mergeReviewedTransaction = (id, patch) => {
+    setTransactions((prev) =>
+      prev.map((tx) => {
+        if (tx.id !== id) return tx;
+        const merged = { ...tx, ...patch };
+        const boostedConfidence = Math.max(merged.confidence ?? 0, LOW_CONFIDENCE_THRESHOLD);
+        const categoryUncertain = Boolean(merged.categoryUncertain);
+        const needsReview = !merged.monthKey || categoryUncertain;
+        const uncertainty = needsReview
+          ? Math.max(merged.uncertainty ?? 0.45, 0.45)
+          : Math.min(merged.uncertainty ?? 0.15, 0.15);
+
+        return {
+          ...merged,
+          confidence: boostedConfidence,
+          uncertainty,
+          needsReview,
+        };
+      })
+    );
+  };
+
+  const deleteTransaction = (id) => {
+    setTransactions((prev) => prev.filter((tx) => tx.id !== id));
+  };
+
+  const updateCategoryMode = (id, mode) => {
+    const modePatch = {
+      isDining: mode === 'dining' || mode === 'both',
+      isMobilePay: mode === 'mobile' || mode === 'both',
+      categoryUncertain: mode === 'unknown',
+    };
+    mergeReviewedTransaction(id, modePatch);
+  };
+
+  const getCategoryMode = (tx) => {
+    if (tx.categoryUncertain) return 'unknown';
+    if (tx.isDining && tx.isMobilePay) return 'both';
+    if (tx.isDining) return 'dining';
+    if (tx.isMobilePay) return 'mobile';
+    return 'none';
+  };
+
+  const importTransactions = async (loader, sourceLabel) => {
+    setIsImporting(true);
+    setErrorText('');
+    setStatusText(`${sourceLabel} 识别中，请稍候...`);
+
+    try {
+      const rawParsed = await loader();
+      if (!rawParsed.length) {
+        setStatusText('');
+        setErrorText('未识别到有效交易，请优先使用 CSV，或在下方粘贴文本后再试。');
+        return;
+      }
+      const prepared = prepareImportedTransactions(rawParsed);
+      const parsed = prepared.transactions;
+      setTransactions(parsed);
+      const uncertainCount = parsed.filter((tx) => tx.needsReview).length;
+
+      const extra = [];
+      if (prepared.duplicateCount > 0) extra.push(`自动排重 ${prepared.duplicateCount} 笔`);
+      if (prepared.matchedRefundCount > 0) extra.push(`匹配退款 ${prepared.matchedRefundCount} 笔`);
+
+      setStatusText(
+        `已导入 ${parsed.length} 笔交易，需复审 ${uncertainCount} 笔${
+          extra.length ? `（${extra.join('，')}）` : ''
+        }。`
+      );
+    } catch (error) {
+      setStatusText('');
+      setErrorText(error instanceof Error ? error.message : '导入失败，请稍后重试。');
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const handleFileImport = async (event) => {
+    const files = Array.from(event.target.files || []);
+    event.target.value = '';
+    if (!files.length) return;
+
+    const supportedFiles = files.filter((file) => {
+      const name = file.name.toLowerCase();
+      return (
+        name.endsWith('.csv') ||
+        name.endsWith('.pdf') ||
+        name.endsWith('.png') ||
+        name.endsWith('.jpg') ||
+        name.endsWith('.jpeg') ||
+        name.endsWith('.webp')
+      );
+    });
+
+    if (!supportedFiles.length) {
+      setErrorText('目前支持 CSV / PDF / PNG / JPG / WEBP。');
+      return;
+    }
+
+    await importTransactions(async () => {
+      const merged = [];
+
+      for (let index = 0; index < supportedFiles.length; index += 1) {
+        const file = supportedFiles[index];
+        const name = file.name.toLowerCase();
+        const sourceTag = `${name.split('.').pop() || 'file'}-${index}-${file.lastModified}-${file.size}`;
+        if (name.endsWith('.csv')) {
+          merged.push(...(await parseCsvStatementFile(file, sourceTag)));
+          continue;
+        }
+        if (name.endsWith('.pdf')) {
+          merged.push(...(await parsePdfStatementFile(file, sourceTag)));
+          continue;
+        }
+        if (name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.webp')) {
+          merged.push(...(await parseImageStatementFile(file, sourceTag)));
+          continue;
+        }
+      }
+
+      return merged;
+    }, supportedFiles.length > 1 ? `${supportedFiles.length} 个文件` : '文件');
+  };
+
+  const handleRawTextImport = () => {
+    if (!rawText.trim()) {
+      setErrorText('请先粘贴 statement 文本。');
+      return;
+    }
+
+    const rawParsed = parseTransactionsFromRawText(rawText, 'text');
+    const prepared = prepareImportedTransactions(rawParsed);
+    const parsed = prepared.transactions;
+    if (!parsed.length) {
+      setErrorText('文本中未提取到交易行，请检查格式（日期 + 商户 + 金额）。');
+      return;
+    }
+
+    setTransactions(parsed);
+    setErrorText('');
+    const uncertainCount = parsed.filter((tx) => tx.needsReview).length;
+    const extra = [];
+    if (prepared.duplicateCount > 0) extra.push(`自动排重 ${prepared.duplicateCount} 笔`);
+    if (prepared.matchedRefundCount > 0) extra.push(`匹配退款 ${prepared.matchedRefundCount} 笔`);
+    setStatusText(
+      `文本识别完成：${parsed.length} 笔交易，需复审 ${uncertainCount} 笔${
+        extra.length ? `（${extra.join('，')}）` : ''
+      }。`
+    );
+  };
+
+  const toMonthRecords = () => {
+    const seed = Date.now();
+    return monthPreview.map((month, index) => ({
+      id: seed + index,
+      monthKey: month.monthKey,
+      totalSpend: month.totalSpend,
+      diningSpend: month.diningSpend,
+      mobilePaySpend: month.mobilePaySpend,
+    }));
+  };
+
+  const canApply = monthPreview.length > 0;
+
+  return (
+    <section className="bg-white/30 dark:bg-white/5 backdrop-blur-2xl rounded-[2rem] md:rounded-[2.5rem] p-6 md:p-8 shadow-[0_4px_30px_rgba(0,0,0,0.02)] border border-white/20 dark:border-white/5 space-y-6">
+      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+        <div className="space-y-1">
+          <div className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">智能导入（可选）</div>
+          <p className="text-sm text-gray-600 dark:text-gray-300">
+            上传 statement（CSV / PDF / 截图）后自动归类，不确定类别交易可人工复审。
+          </p>
+        </div>
+        <div className="text-[11px] text-gray-500 dark:text-gray-400">
+          导入结果会映射到现有“按月输入”，不会移除当前手工功能。
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="space-y-3">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,.pdf,.png,.jpg,.jpeg,.webp"
+            multiple
+            className="hidden"
+            onChange={handleFileImport}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isImporting}
+            className="w-full py-4 px-4 rounded-2xl bg-black text-white dark:bg-white dark:text-black font-bold text-sm hover:opacity-90 disabled:opacity-50 transition-opacity"
+          >
+            {isImporting ? '导入中...' : '上传 statement / 截图（支持多选）'}
+          </button>
+          <p className="text-[11px] text-gray-500 dark:text-gray-400">
+            建议优先上传 CSV（准确率最高）；PDF 与截图会尝试文本识别。
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          <textarea
+            value={rawText}
+            onChange={(event) => setRawText(event.target.value)}
+            placeholder="可粘贴账单文本（每行建议包含：日期 + 商户 + 金额）"
+            className="w-full h-28 rounded-2xl px-4 py-3 bg-white/60 dark:bg-black/30 border border-white/40 dark:border-white/10 text-sm text-gray-700 dark:text-gray-200 outline-none focus:ring-2 focus:ring-[#db0011]/40"
+          />
+          <button
+            type="button"
+            onClick={handleRawTextImport}
+            disabled={isImporting}
+            className="w-full py-3 rounded-2xl bg-white/70 dark:bg-white/10 border border-white/50 dark:border-white/10 text-sm font-bold text-gray-700 dark:text-gray-200 hover:bg-white dark:hover:bg-white/20 disabled:opacity-50 transition-colors"
+          >
+            从粘贴文本识别
+          </button>
+        </div>
+      </div>
+
+      {(statusText || errorText) && (
+        <div className={`rounded-2xl px-4 py-3 text-sm ${errorText ? 'bg-red-50/80 dark:bg-red-900/20 text-red-600 dark:text-red-300' : 'bg-green-50/80 dark:bg-green-900/20 text-green-700 dark:text-green-300'}`}>
+          {errorText || statusText}
+        </div>
+      )}
+
+      {transactions.length > 0 && (
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="rounded-2xl bg-white/50 dark:bg-white/5 px-4 py-3">
+              <div className="text-[10px] uppercase tracking-widest text-gray-500 dark:text-gray-400">已识别交易</div>
+              <div className="text-2xl font-bold text-gray-800 dark:text-white">{transactions.length}</div>
+            </div>
+            <div className="rounded-2xl bg-white/50 dark:bg-white/5 px-4 py-3">
+              <div className="text-[10px] uppercase tracking-widest text-gray-500 dark:text-gray-400">需复审</div>
+              <div className="text-2xl font-bold text-orange-500">{reviewCount}</div>
+            </div>
+            <div className="rounded-2xl bg-white/50 dark:bg-white/5 px-4 py-3">
+              <div className="text-[10px] uppercase tracking-widest text-gray-500 dark:text-gray-400">识别月份</div>
+              <div className="text-2xl font-bold text-gray-800 dark:text-white">{monthPreview.length}</div>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto rounded-2xl border border-white/30 dark:border-white/10">
+            <table className="w-full text-sm">
+              <thead className="bg-white/60 dark:bg-white/5 text-gray-500 dark:text-gray-400 uppercase text-[10px] tracking-widest">
+                <tr>
+                  <th className="text-left px-3 py-2">月份</th>
+                  <th className="text-right px-3 py-2">总消费</th>
+                  <th className="text-right px-3 py-2">餐饮</th>
+                  <th className="text-right px-3 py-2">移动支付</th>
+                  <th className="text-right px-3 py-2">待复审</th>
+                </tr>
+              </thead>
+              <tbody>
+                {monthPreview.map((month) => (
+                  <tr key={month.monthKey} className="border-t border-white/20 dark:border-white/5">
+                    <td className="px-3 py-2 font-mono text-gray-700 dark:text-gray-200">{month.monthKey}</td>
+                    <td className="px-3 py-2 text-right font-mono text-gray-700 dark:text-gray-200">{month.totalSpend.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-mono text-gray-700 dark:text-gray-200">{month.diningSpend.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-mono text-gray-700 dark:text-gray-200">{month.mobilePaySpend.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-mono text-orange-500">{month.reviewCount}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {transactions.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">
+                  不确定类别交易可人工复审（支持人工删除）
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowAllForReview((v) => !v)}
+                  className="text-[11px] px-3 py-1.5 rounded-full bg-white/70 dark:bg-white/10 border border-white/50 dark:border-white/10 text-gray-600 dark:text-gray-300"
+                >
+                  {showAllForReview ? '仅看不确定交易' : '显示全部交易'}
+                </button>
+              </div>
+              {previewReviewRows.length === 0 ? (
+                <div className="text-sm text-gray-500 dark:text-gray-400 bg-white/40 dark:bg-white/5 rounded-2xl px-4 py-3">
+                  当前没有不确定交易，可点击“显示全部交易”手动校对分类。
+                </div>
+              ) : (
+              <div className="space-y-2">
+                {previewReviewRows.map((tx) => (
+                  <div key={tx.id} className="rounded-2xl bg-white/50 dark:bg-white/5 border border-white/30 dark:border-white/10 px-4 py-3 space-y-2">
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                      <div className="text-sm text-gray-700 dark:text-gray-200">
+                        <span className="font-semibold">{tx.description}</span>
+                        <span className="ml-2 font-mono text-gray-500 dark:text-gray-400">¥{tx.amount.toLocaleString()}</span>
+                      </div>
+                      <div className="flex items-center gap-2 self-start md:self-center">
+                        <div className={`text-[11px] px-2 py-1 rounded-full ${tx.needsReview ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300' : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'}`}>
+                          不确定程度 {((tx.uncertainty ?? (1 - (tx.confidence ?? 0.5))) * 100).toFixed(0)}%
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => deleteTransaction(tx.id)}
+                          className="inline-flex items-center justify-center rounded-lg border border-red-200/80 dark:border-red-500/30 bg-white/80 dark:bg-red-900/20 text-red-500 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/30 px-2 py-1"
+                          title="删除交易"
+                          aria-label={`删除交易 ${tx.description}`}
+                        >
+                          <Icons.Trash />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-4">
+                      <label className="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+                        分类
+                        <select
+                          value={getCategoryMode(tx)}
+                          onChange={(event) => updateCategoryMode(tx.id, event.target.value)}
+                          className="rounded-lg px-2 py-1 bg-white/70 dark:bg-black/30 border border-white/40 dark:border-white/10"
+                        >
+                          <option value="unknown">不确定（待复审）</option>
+                          <option value="dining">仅内地餐饮</option>
+                          <option value="mobile">仅移动支付</option>
+                          <option value="both">餐饮 + 移动支付</option>
+                          <option value="none">都不是</option>
+                        </select>
+                      </label>
+                      <label className="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+                        月份
+                        <input
+                          type="month"
+                          value={tx.monthKey}
+                          onChange={(event) => mergeReviewedTransaction(tx.id, { monthKey: event.target.value })}
+                          className="rounded-lg px-2 py-1 bg-white/70 dark:bg-black/30 border border-white/40 dark:border-white/10"
+                        />
+                      </label>
+                    </div>
+                    {tx.reasons?.length > 0 && (
+                      <div className="text-[11px] text-gray-500 dark:text-gray-400">
+                        {tx.reasons.join('；')}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              )}
+            </div>
+          )}
+
+          <div className="flex flex-col md:flex-row gap-3">
+            <button
+              type="button"
+              disabled={!canApply}
+              onClick={() => onReplaceMonths(toMonthRecords())}
+              className="flex-1 py-3 rounded-2xl bg-[#db0011] text-white font-bold disabled:opacity-50"
+            >
+              替换当前按月输入
+            </button>
+            <button
+              type="button"
+              disabled={!canApply}
+              onClick={() => onAppendMonths(toMonthRecords())}
+              className="flex-1 py-3 rounded-2xl bg-white/70 dark:bg-white/10 border border-white/50 dark:border-white/10 text-gray-700 dark:text-gray-200 font-bold disabled:opacity-50"
+            >
+              追加到当前按月输入
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+};
+
 // ==================== Main App ====================
 
-function calculate(mode, activities, inputData) {
+function calculate(mode, activities, inputData, options = {}) {
+  const includePendingDining = Boolean(options.includePendingDining);
   let totalRc = 0, totalSpend = 0;
-  let rcBase = 0, rcRyc = 0, rcMobile = 0, rcDining = 0;
+  let rcBase = 0, rcRyc = 0, rcMobile = 0;
+  let rcDiningPending = 0;
   let rycUsed = 0, mpUsed = 0, diningUsed = 0;
 
   if (mode === 'monthly') {
@@ -283,19 +681,39 @@ function calculate(mode, activities, inputData) {
 
       if (activities.ryc) {
         const remaining = Math.max(0, CONSTANTS.RYC_CAP_RMB - rycUsed);
-        const eligible = Math.min(m.totalSpend, remaining);
-        rcRyc += eligible * CONSTANTS.RYC_RATE; rycUsed += eligible;
+        const eligibleRaw = Math.min(m.totalSpend, remaining);
+        const eligible = Math.max(-rycUsed, eligibleRaw);
+        rcRyc += eligible * CONSTANTS.RYC_RATE;
+        rycUsed += eligible;
       }
       if (activities.mobilePay) {
         const remaining = Math.max(0, CONSTANTS.MP_CAP_RMB - mpUsed);
-        const eligible = Math.min(m.mobilePaySpend, remaining);
-        rcMobile += eligible * CONSTANTS.MP_RATE; mpUsed += eligible;
+        const eligibleRaw = Math.min(m.mobilePaySpend, remaining);
+        const eligible = Math.max(-mpUsed, eligibleRaw);
+        rcMobile += eligible * CONSTANTS.MP_RATE;
+        mpUsed += eligible;
       }
-      if (activities.dining && m.diningSpend > 0) {
-        if (m.totalSpend >= CONSTANTS.DINING_THRESHOLD_RMB) {
-          diningUsed += Math.min(m.diningSpend, CONSTANTS.DINING_MONTHLY_CAP_SPEND);
-          rcDining += (Math.min(m.diningSpend * CONSTANTS.DINING_A_RATE, CONSTANTS.DINING_A_CAP) + Math.min(m.diningSpend * CONSTANTS.DINING_B_RATE, CONSTANTS.DINING_B_CAP));
-        }
+      if (activities.dining && m.diningSpend !== 0) {
+        const monthlyCapped =
+          Math.sign(m.diningSpend) * Math.min(Math.abs(m.diningSpend), CONSTANTS.DINING_MONTHLY_CAP_SPEND);
+        const eligibleByThreshold =
+          monthlyCapped > 0
+            ? (m.totalSpend >= CONSTANTS.DINING_THRESHOLD_RMB ? monthlyCapped : 0)
+            : monthlyCapped;
+        const eligibleDiningSpend = Math.max(-diningUsed, eligibleByThreshold);
+
+        diningUsed += eligibleDiningSpend;
+
+        const diningA = Math.max(
+          -CONSTANTS.DINING_A_CAP,
+          Math.min(eligibleDiningSpend * CONSTANTS.DINING_A_RATE, CONSTANTS.DINING_A_CAP)
+        );
+        const diningB = Math.max(
+          -CONSTANTS.DINING_B_CAP,
+          Math.min(eligibleDiningSpend * CONSTANTS.DINING_B_RATE, CONSTANTS.DINING_B_CAP)
+        );
+
+        rcDiningPending += diningA + diningB;
       }
     });
   } else {
@@ -304,62 +722,124 @@ function calculate(mode, activities, inputData) {
     rcBase = totalSpend * CONSTANTS.BASE_RATE;
 
     if (activities.ryc) {
-      rycUsed = Math.min(totalSpend, CONSTANTS.RYC_CAP_RMB);
+      rycUsed = Math.min(Math.max(totalSpend, 0), CONSTANTS.RYC_CAP_RMB);
       rcRyc = rycUsed * CONSTANTS.RYC_RATE;
     }
     if (activities.mobilePay) {
-      mpUsed = Math.min(y.mobilePaySpend, CONSTANTS.MP_CAP_RMB);
+      mpUsed = Math.min(Math.max(y.mobilePaySpend, 0), CONSTANTS.MP_CAP_RMB);
       rcMobile = mpUsed * CONSTANTS.MP_RATE;
     }
     if (activities.dining && y.diningSpend > 0) {
-      diningUsed = Math.min(y.diningSpend, CONSTANTS.DINING_YEARLY_CAP_SPEND);
+      diningUsed = Math.min(Math.max(y.diningSpend, 0), CONSTANTS.DINING_YEARLY_CAP_SPEND);
       const avgTotal = totalSpend / 12;
       const avgDining = y.diningSpend / 12;
       if (y.forceThreshold || avgTotal >= CONSTANTS.DINING_THRESHOLD_RMB) {
-         rcDining = (Math.min(avgDining * CONSTANTS.DINING_A_RATE, CONSTANTS.DINING_A_CAP) + Math.min(avgDining * CONSTANTS.DINING_B_RATE, CONSTANTS.DINING_B_CAP)) * 12;
+         rcDiningPending =
+           (Math.min(avgDining * CONSTANTS.DINING_A_RATE, CONSTANTS.DINING_A_CAP) +
+             Math.min(avgDining * CONSTANTS.DINING_B_RATE, CONSTANTS.DINING_B_CAP)) *
+           12;
       }
     }
   }
-  totalRc = rcBase + rcRyc + rcMobile + rcDining;
-  return { totalRc, totalSpend, rcBase, rcRyc, rcMobile, rcDining, rycUsed, mpUsed, diningUsed, asiaMiles: totalRc * CONSTANTS.RC_TO_ASIAMILES, returnRate: totalSpend > 0 ? (totalRc / totalSpend) * 100 : 0 };
+  const rcDiningIncluded = includePendingDining ? rcDiningPending : 0;
+  totalRc = rcBase + rcRyc + rcMobile + rcDiningIncluded;
+  return {
+    totalRc,
+    totalSpend,
+    rcBase,
+    rcRyc,
+    rcMobile,
+    rcDiningPending,
+    rcDiningIncluded,
+    includePendingDining,
+    rycUsed,
+    mpUsed,
+    diningUsed,
+    asiaMiles: totalRc * CONSTANTS.RC_TO_ASIAMILES,
+    returnRate: totalSpend > 0 ? (totalRc / totalSpend) * 100 : 0,
+  };
 }
 
 export default function PulseLiquidFixed() {
   const [activeTab, setActiveTab] = useState('monthly');
   const [activities, setActivities] = useState({ ryc: true, mobilePay: true, dining: true });
-  const [months, setMonths] = useState([{ id: 1, totalSpend: 0, mobilePaySpend: 0, diningSpend: 0 }]);
+  const [includePendingDining, setIncludePendingDining] = useState(false);
+  const [themeMode, setThemeMode] = useState(() => {
+    try {
+      return localStorage.getItem('pulse-theme-mode') || 'system';
+    } catch {
+      return 'system';
+    }
+  });
+  const [resolvedTheme, setResolvedTheme] = useState('light');
+  const [months, setMonths] = useState([{ id: 1, monthKey: '', totalSpend: 0, mobilePaySpend: 0, diningSpend: 0 }]);
   const [yearly, setYearly] = useState({ totalSpend: 0, mobilePaySpend: 0, diningSpend: 0, forceThreshold: true });
 
-  const result = useMemo(() => calculate(activeTab, activities, activeTab === 'monthly' ? months : yearly), [activeTab, activities, months, yearly]);
+  const result = useMemo(
+    () =>
+      calculate(
+        activeTab,
+        activities,
+        activeTab === 'monthly' ? months : yearly,
+        { includePendingDining }
+      ),
+    [activeTab, activities, months, yearly, includePendingDining]
+  );
 
-  const addMonth = () => setMonths([...months, { id: Date.now(), totalSpend: 0, mobilePaySpend: 0, diningSpend: 0 }]);
+  const addMonth = () => setMonths([...months, { id: Date.now(), monthKey: '', totalSpend: 0, mobilePaySpend: 0, diningSpend: 0 }]);
   const removeMonth = (id) => setMonths(months.filter(m => m.id !== id));
   const updateMonth = (id, field, val) => setMonths(months.map(m => m.id === id ? { ...m, [field]: val } : m));
 
-  // 修复核心 2: 动态注入 theme-color meta 标签，让 Safari 地址栏跟随深色模式变黑
+  const replaceMonthsFromImport = (importedMonths) => {
+    if (!importedMonths.length) return;
+    setMonths(importedMonths);
+    setActiveTab('monthly');
+  };
+
+  const appendMonthsFromImport = (importedMonths) => {
+    if (!importedMonths.length) return;
+    setMonths((prev) => [...prev, ...importedMonths]);
+    setActiveTab('monthly');
+  };
+
   useEffect(() => {
-    // 查找或创建 meta 标签
+    const matcher = window.matchMedia('(prefers-color-scheme: dark)');
+
+    const applyTheme = () => {
+      const isDark = themeMode === 'dark' || (themeMode === 'system' && matcher.matches);
+      document.documentElement.classList.toggle('dark', isDark);
+      document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
+      setResolvedTheme(isDark ? 'dark' : 'light');
+    };
+
+    applyTheme();
+
+    if (themeMode === 'system') {
+      matcher.addEventListener('change', applyTheme);
+      return () => matcher.removeEventListener('change', applyTheme);
+    }
+
+    return undefined;
+  }, [themeMode]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('pulse-theme-mode', themeMode);
+    } catch (error) {
+      void error;
+    }
+  }, [themeMode]);
+
+  // 动态注入 theme-color meta 标签，让 Safari 地址栏跟随主题
+  useEffect(() => {
     let meta = document.querySelector('meta[name="theme-color"]');
     if (!meta) {
       meta = document.createElement('meta');
       meta.name = 'theme-color';
       document.head.appendChild(meta);
     }
-
-    // 更新颜色的函数
-    const updateThemeColor = () => {
-      const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      // 深色模式下设为 #000000 (纯黑)，亮色模式下设为 #F5F5F7
-      meta.content = isDark ? '#000000' : '#F5F5F7';
-    };
-
-    // 初始化并添加监听
-    updateThemeColor();
-    const matcher = window.matchMedia('(prefers-color-scheme: dark)');
-    matcher.addEventListener('change', updateThemeColor);
-
-    return () => matcher.removeEventListener('change', updateThemeColor);
-  }, []);
+    meta.content = resolvedTheme === 'dark' ? '#000000' : '#F5F5F7';
+  }, [resolvedTheme]);
 
   return (
     <div className="min-h-screen bg-[#F5F5F7] dark:bg-black text-gray-900 dark:text-gray-100 font-sans selection:bg-red-100 dark:selection:bg-red-900 pb-32 overflow-x-hidden relative transition-colors duration-500">
@@ -384,22 +864,33 @@ export default function PulseLiquidFixed() {
             </span>
           </div>
           
-          <div className="bg-gray-100/50 dark:bg-white/10 p-1 rounded-full flex backdrop-blur-md">
-            {['monthly', 'yearly'].map(t => (
-              <button 
-                key={t} 
-                onClick={() => setActiveTab(t)} 
-                className={`
-                  px-4 py-1.5 md:px-6 md:py-2.5 rounded-full text-[10px] md:text-xs font-bold transition-all duration-300
-                  ${activeTab === t 
-                    ? 'bg-white dark:bg-gray-800 text-black dark:text-white shadow-[0_4px_12px_rgba(0,0,0,0.08)]' 
-                    : 'text-gray-400 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-200'
-                  }
-                `}
-              >
-                {t === 'monthly' ? '按月' : '按年'}
-              </button>
-            ))}
+          <div className="flex items-center gap-2">
+            <div className="bg-gray-100/50 dark:bg-white/10 p-1 rounded-full flex backdrop-blur-md">
+              {['monthly', 'yearly'].map(t => (
+                <button 
+                  key={t} 
+                  onClick={() => setActiveTab(t)} 
+                  className={`
+                    px-4 py-1.5 md:px-6 md:py-2.5 rounded-full text-[10px] md:text-xs font-bold transition-all duration-300
+                    ${activeTab === t 
+                      ? 'bg-white dark:bg-gray-800 text-black dark:text-white shadow-[0_4px_12px_rgba(0,0,0,0.08)]' 
+                      : 'text-gray-400 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-200'
+                    }
+                  `}
+                >
+                  {t === 'monthly' ? '按月' : '按年'}
+                </button>
+              ))}
+            </div>
+            <select
+              value={themeMode}
+              onChange={(event) => setThemeMode(event.target.value)}
+              className="rounded-full px-3 py-2 text-[10px] md:text-xs font-bold bg-white/80 dark:bg-black/40 border border-white/40 dark:border-white/10 text-gray-600 dark:text-gray-200 backdrop-blur-md"
+            >
+              <option value="system">自动</option>
+              <option value="light">浅色</option>
+              <option value="dark">深色</option>
+            </select>
           </div>
         </div>
       </nav>
@@ -413,10 +904,12 @@ export default function PulseLiquidFixed() {
 
         {/* 核心配置 */}
         <section className="bg-white/30 dark:bg-white/5 backdrop-blur-xl rounded-[2rem] md:rounded-[2.5rem] p-6 md:p-8 shadow-[0_4px_20px_rgba(0,0,0,0.01)] border border-white/20 dark:border-white/5 transition-colors">
-           <h3 className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6 flex items-center gap-2 px-1">
-             <Icons.Settings />
-             <span>奖励系数配置</span>
-           </h3>
+           <div className="mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-3 px-1">
+             <h3 className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest flex items-center gap-2">
+               <Icons.Settings />
+               <span>奖励系数配置</span>
+             </h3>
+           </div>
            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4">
               {[
                  { key: 'ryc', label: '赏世界 RYC', sub: '5X 积分 / 年限10万' },
@@ -443,7 +936,7 @@ export default function PulseLiquidFixed() {
                      <div className="bg-white/30 dark:bg-white/5 backdrop-blur-2xl rounded-[2rem] md:rounded-[2.5rem] p-6 md:p-8 shadow-[0_4px_30px_rgba(0,0,0,0.02)] transition-all hover:bg-white/40 dark:hover:bg-white/10 border border-white/20 dark:border-white/5">
                         <div className="flex justify-between items-center mb-6 px-1">
                            <span className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">
-                             {idx + 1} 月消费详情
+                             {m.monthKey ? `${m.monthKey} 消费详情` : `${idx + 1} 月消费详情`}
                            </span>
                            <button onClick={() => removeMonth(m.id)} className="text-gray-300 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400 transition-colors p-2"><Icons.Trash /></button>
                         </div>
@@ -500,6 +993,11 @@ export default function PulseLiquidFixed() {
            )}
         </section>
 
+        <SmartImportPanel
+          onReplaceMonths={replaceMonthsFromImport}
+          onAppendMonths={appendMonthsFromImport}
+        />
+
         {/* 黑色汇总卡片 */}
         <section>
           <div className="relative overflow-hidden rounded-[2rem] md:rounded-[3rem] bg-[#050505] dark:bg-black text-white p-6 md:p-14 shadow-2xl shadow-gray-900/30 dark:shadow-white/5 ring-1 ring-white/10">
@@ -509,6 +1007,11 @@ export default function PulseLiquidFixed() {
                <div className="flex flex-col justify-between">
                   <div className="space-y-4">
                     <div className="text-gray-500 text-[10px] md:text-xs font-bold uppercase tracking-[0.2em] mb-4">Total Estimated Rewards</div>
+                    {activities.dining && (
+                      <div className="text-[10px] text-gray-500">
+                        {includePendingDining ? '已计入待定餐饮 RC' : '未计入待定餐饮 RC（默认）'}
+                      </div>
+                    )}
                     <div className="flex items-baseline gap-2 md:gap-3 flex-wrap">
                        <span className="text-6xl md:text-8xl font-bold tracking-tighter text-white">{result.totalRc.toFixed(0)}</span>
                        <span className="text-2xl md:text-3xl text-gray-600 font-light tracking-tight">.{result.totalRc.toFixed(2).split('.')[1]} <span className="text-lg md:text-xl font-bold text-gray-700">RC</span></span>
@@ -533,11 +1036,27 @@ export default function PulseLiquidFixed() {
                     {activities.mobilePay && <ProgressBar label="移动支付 (Mobile)" used={result.mpUsed} cap={CONSTANTS.MP_CAP_RMB} />}
                     {activities.dining && <ProgressBar label="内地餐饮 (Dining)" used={result.diningUsed} cap={CONSTANTS.DINING_YEARLY_CAP_SPEND} />}
                   </div>
+                  {activities.dining && (
+                    <div className="rounded-2xl bg-white/5 border border-white/10 px-4 py-4 space-y-3">
+                      <div className="flex items-center justify-between gap-4">
+                        <div>
+                          <div className="text-[10px] uppercase tracking-widest text-gray-500">待定内地餐饮 RC</div>
+                          <div className="text-xl font-bold text-orange-300 font-mono">
+                            {result.rcDiningPending.toFixed(0)}
+                          </div>
+                        </div>
+                        <Toggle checked={includePendingDining} onChange={setIncludePendingDining} />
+                      </div>
+                      <div className="text-[10px] text-gray-500 leading-relaxed">
+                        默认不计入总 RC。打开开关后将把待定餐饮 RC 纳入总收益估算。
+                      </div>
+                    </div>
+                  )}
                   <div className="grid grid-cols-4 gap-2 md:gap-4 text-[9px] md:text-[10px] text-gray-600 pt-8 border-t border-white/5 font-mono uppercase tracking-widest">
                      <div>Base<br/><span className="text-white text-sm md:text-base tracking-normal">{result.rcBase.toFixed(0)}</span></div>
                      {activities.ryc && <div>RYC<br/><span className="text-[#ff4d4d] text-sm md:text-base tracking-normal">{result.rcRyc.toFixed(0)}</span></div>}
                      {activities.mobilePay && <div>Mobile<br/><span className="text-[#ff4d4d] text-sm md:text-base tracking-normal">{result.rcMobile.toFixed(0)}</span></div>}
-                     {activities.dining && <div>Dining<br/><span className="text-orange-400 text-sm md:text-base tracking-normal">{result.rcDining.toFixed(0)}</span></div>}
+                     {activities.dining && <div>Dining<br/><span className="text-orange-400 text-sm md:text-base tracking-normal">{result.rcDiningIncluded.toFixed(0)}</span></div>}
                   </div>
                </div>
              </div>
