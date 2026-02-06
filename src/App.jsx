@@ -1118,15 +1118,10 @@ export default function PulseLiquidFixed() {
     setActiveTab('monthly');
   };
 
-  const handleResetAll = () => {
-    const confirmed = window.confirm('确认一键重置所有输入与开关？');
+  const handleResetInputs = () => {
+    const confirmed = window.confirm('确认重置所有输入数据？这不会改变主题、计算模式和奖励配置。');
     if (!confirmed) return;
 
-    setActiveTab('monthly');
-    setCalcMode('reconcile');
-    setActivities({ ryc: true, mobilePay: true, dining: true });
-    setIncludePendingDining(false);
-    setDeductPendingClawback(false);
     setMonths([createMonthRecord(1)]);
     setYearly(createYearlyRecord());
   };
@@ -1213,14 +1208,14 @@ export default function PulseLiquidFixed() {
             </span>
           </div>
           
-          <div className="flex items-center gap-1.5 w-full md:w-auto">
-            <div className="bg-gray-100/50 dark:bg-white/10 p-1 rounded-full flex backdrop-blur-md flex-1 md:flex-none">
+          <div className="flex items-center gap-1.5 w-full md:w-auto flex-wrap md:flex-nowrap">
+            <div className="bg-gray-100/50 dark:bg-white/10 p-1 rounded-full flex backdrop-blur-md w-full sm:flex-1 md:w-auto md:flex-none">
               {['monthly', 'yearly'].map(t => (
                 <button 
                   key={t} 
                   onClick={() => setActiveTab(t)} 
                   className={`
-                    flex-1 md:flex-none px-2.5 py-1.5 md:px-6 md:py-2.5 rounded-full text-[10px] md:text-xs font-bold transition-all duration-300
+                    flex-1 md:flex-none px-2.5 py-1.5 md:px-6 md:py-2.5 rounded-full text-[10px] md:text-xs font-bold transition-all duration-300 min-w-0
                     ${activeTab === t 
                       ? 'bg-white dark:bg-gray-800 text-black dark:text-white shadow-[0_4px_12px_rgba(0,0,0,0.08)]' 
                       : 'text-gray-400 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-200'
@@ -1234,7 +1229,7 @@ export default function PulseLiquidFixed() {
             <select
               value={calcMode}
               onChange={(event) => setCalcMode(event.target.value)}
-              className="rounded-full px-2.5 py-2 text-[10px] md:text-xs font-bold bg-white/80 dark:bg-black/40 border border-white/40 dark:border-white/10 text-gray-600 dark:text-gray-200 backdrop-blur-md w-[92px] md:w-auto"
+              className="rounded-full px-2.5 py-2 text-[10px] md:text-xs font-bold bg-white/80 dark:bg-black/40 border border-white/40 dark:border-white/10 text-gray-600 dark:text-gray-200 backdrop-blur-md w-[100px] md:w-auto"
             >
               <option value="reconcile">对账</option>
               <option value="estimate">估算</option>
@@ -1242,9 +1237,9 @@ export default function PulseLiquidFixed() {
             <select
               value={themeMode}
               onChange={(event) => setThemeMode(event.target.value)}
-              className="rounded-full px-2.5 py-2 text-[10px] md:text-xs font-bold bg-white/80 dark:bg-black/40 border border-white/40 dark:border-white/10 text-gray-600 dark:text-gray-200 backdrop-blur-md w-[78px] md:w-auto"
+              className="rounded-full px-2.5 py-2 text-[10px] md:text-xs font-bold bg-white/80 dark:bg-black/40 border border-white/40 dark:border-white/10 text-gray-600 dark:text-gray-200 backdrop-blur-md w-[100px] md:w-auto"
             >
-              <option value="system">自动</option>
+              <option value="system">主题</option>
               <option value="light">浅色</option>
               <option value="dark">深色</option>
             </select>
@@ -1262,9 +1257,9 @@ export default function PulseLiquidFixed() {
         <section className="bg-white/30 dark:bg-white/5 backdrop-blur-xl rounded-3xl px-5 py-4 border border-white/20 dark:border-white/10">
           <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-2">计算模式说明</div>
           <div className="text-sm text-gray-700 dark:text-gray-200 leading-relaxed">
-            <span className="font-semibold">对账模式</span>：更接近 HSBC 的算法，RC 数量更准确。
+            <span className="font-semibold text-emerald-600 dark:text-emerald-300">对账模式</span>：更接近 HSBC 的算法，RC 数量更准确。
             <span className="mx-2">|</span>
-            <span className="font-semibold">估算模式</span>：直接按百分比计算，结果可能有误差。
+            <span className="font-semibold text-amber-600 dark:text-amber-300">估算模式</span>：直接按百分比计算，结果可能有误差。
           </div>
           <div className="text-[11px] text-gray-500 dark:text-gray-400 mt-2">
             建议优先按月精准计算；按年计算在存在内地餐饮消费时会有误差。
@@ -1278,13 +1273,6 @@ export default function PulseLiquidFixed() {
                <Icons.Settings />
                <span>奖励系数配置</span>
              </h3>
-             <button
-               type="button"
-               onClick={handleResetAll}
-               className="self-start md:self-auto rounded-full px-3 py-1.5 text-[11px] font-bold bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-300 border border-red-200/70 dark:border-red-700/30"
-             >
-               一键重置
-             </button>
            </div>
            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4">
               {[
@@ -1447,6 +1435,16 @@ export default function PulseLiquidFixed() {
                </div>
              </div>
            )}
+        </section>
+
+        <section>
+          <button
+            type="button"
+            onClick={handleResetInputs}
+            className="w-full py-4 md:py-5 rounded-[1.5rem] md:rounded-[2rem] bg-gradient-to-r from-red-600 to-[#db0011] text-white font-bold text-sm md:text-base shadow-[0_12px_30px_-12px_rgba(219,0,17,0.8)] hover:opacity-95 transition-opacity"
+          >
+            一键重置输入数据
+          </button>
         </section>
 
         <SmartImportPanel
