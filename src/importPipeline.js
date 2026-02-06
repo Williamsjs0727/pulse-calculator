@@ -931,18 +931,26 @@ export const parseImageStatementFile = async (file, sourceTag = 'image') => {
       return plain;
     };
 
-    const merged = [];
-    const preprocessed = await preprocessImageForOcr(file);
+    const rawResult = await worker.recognize(file);
+    const rawTransactions = extractTransactions(rawResult?.data || {}, `${sourceTag}-ocr-raw`);
 
-    if (preprocessed) {
-      const preResult = await worker.recognize(preprocessed);
-      merged.push(...extractTransactions(preResult?.data || {}, `${sourceTag}-ocr-pre`));
+    // 回到上一步策略：raw 结果优先，避免 pre/raw 合并引入额外噪音。
+    if (rawTransactions.length >= 3) {
+      return rawTransactions;
     }
 
-    const rawResult = await worker.recognize(file);
-    merged.push(...extractTransactions(rawResult?.data || {}, `${sourceTag}-ocr-raw`));
+    const preprocessed = await preprocessImageForOcr(file);
+    if (!preprocessed) {
+      return rawTransactions;
+    }
 
-    return merged;
+    const preResult = await worker.recognize(preprocessed);
+    const preTransactions = extractTransactions(preResult?.data || {}, `${sourceTag}-ocr-pre`);
+
+    if (preTransactions.length > rawTransactions.length) {
+      return preTransactions;
+    }
+    return rawTransactions.length ? rawTransactions : preTransactions;
   } finally {
     await worker.terminate();
   }
@@ -1255,27 +1263,85 @@ const sortSourceRowsForSequence = (rows) =>
     return a.__importOrder - b.__importOrder;
   });
 
+const withinSequenceWindow = (i, j, lenA, lenB) => {
+  const absoluteWindow = 14;
+  if (Math.abs(i - j) <= absoluteWindow) return true;
+
+  if (lenA <= 0 || lenB <= 0) return false;
+  const ratioA = i / lenA;
+  const ratioB = j / lenB;
+  return Math.abs(ratioA - ratioB) <= 0.22;
+};
+
+const sequencePairScore = (txA, txB, i, j, lenA, lenB) => {
+  const similarity = merchantSimilarityScore(txA, txB);
+  const dateA = txDayKey(txA);
+  const dateB = txDayKey(txB);
+  const sameDay = Boolean(dateA && dateB && dateA === dateB);
+  const sameMonth = Boolean(txMonthKey(txA) && txMonthKey(txA) === txMonthKey(txB));
+  const indexDrift = Math.abs(i / Math.max(1, lenA) - j / Math.max(1, lenB));
+
+  let score = 1.25 + similarity * 1.5;
+  if (sameDay) score += 0.5;
+  else if (sameMonth) score += 0.2;
+  score += Math.max(0, 0.35 - indexDrift);
+  return score;
+};
+
 const findSequenceMatches = (rowsA, rowsB) => {
-  const matches = [];
-  let cursorB = 0;
+  const lenA = rowsA.length;
+  const lenB = rowsB.length;
+  if (!lenA || !lenB) return [];
 
-  for (let i = 0; i < rowsA.length; i += 1) {
-    const txA = rowsA[i];
-    let matchedIndex = -1;
-    const searchEnd = Math.min(rowsB.length, cursorB + 8);
+  const dp = Array.from({ length: lenA + 1 }, () => new Array(lenB + 1).fill(0));
+  const trace = Array.from({ length: lenA + 1 }, () => new Array(lenB + 1).fill(0));
 
-    for (let j = cursorB; j < searchEnd; j += 1) {
-      if (likelySameTransaction(txA, rowsB[j])) {
-        matchedIndex = j;
-        break;
+  for (let i = 1; i <= lenA; i += 1) {
+    for (let j = 1; j <= lenB; j += 1) {
+      let best = dp[i - 1][j];
+      let action = 1; // skip A
+
+      if (dp[i][j - 1] > best) {
+        best = dp[i][j - 1];
+        action = 2; // skip B
       }
-    }
 
-    if (matchedIndex === -1) continue;
-    matches.push([txA, rowsB[matchedIndex]]);
-    cursorB = matchedIndex + 1;
+      const txA = rowsA[i - 1];
+      const txB = rowsB[j - 1];
+      const canMatch =
+        likelySameTransaction(txA, txB) &&
+        withinSequenceWindow(i - 1, j - 1, lenA, lenB);
+
+      if (canMatch) {
+        const score = dp[i - 1][j - 1] + sequencePairScore(txA, txB, i - 1, j - 1, lenA, lenB);
+        if (score >= best) {
+          best = score;
+          action = 3; // match
+        }
+      }
+
+      dp[i][j] = best;
+      trace[i][j] = action;
+    }
   }
 
+  const matches = [];
+  let i = lenA;
+  let j = lenB;
+  while (i > 0 && j > 0) {
+    const action = trace[i][j];
+    if (action === 3) {
+      matches.push([rowsA[i - 1], rowsB[j - 1]]);
+      i -= 1;
+      j -= 1;
+    } else if (action === 2) {
+      j -= 1;
+    } else {
+      i -= 1;
+    }
+  }
+
+  matches.reverse();
   return matches;
 };
 
