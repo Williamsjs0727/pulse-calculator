@@ -729,11 +729,8 @@ const buildCrossSourceDescriptionKey = (tx) => {
 const buildCrossSourceSignature = (tx) => {
   const signKey = tx.isRefund ? 'R' : 'S';
   const amountKey = amountToKey(tx.signedSpendImpact);
-  const day = txDayKey(tx);
-  const month = txMonthKey(tx);
   const descriptionKey = buildCrossSourceDescriptionKey(tx);
-  const scope = day ? `D:${day}` : `M:${month || 'UNKNOWN'}`;
-  return `${scope}|${descriptionKey}|${amountKey}|${signKey}`;
+  return `${descriptionKey}|${amountKey}|${signKey}`;
 };
 
 const dedupeAcrossSourcesBySignature = (rows) => {
@@ -748,6 +745,56 @@ const dedupeAcrossSourcesBySignature = (rows) => {
 
   const deduped = [];
   let removedCount = 0;
+
+  const canJoinCluster = (tx, cluster) => {
+    const day = txDayKey(tx);
+    const month = txMonthKey(tx);
+
+    if (day && cluster.dayKeys.size > 0 && !cluster.dayKeys.has(day)) return false;
+    if (month && cluster.monthKeys.size > 0 && !cluster.monthKeys.has(month)) return false;
+    if (!day && month && cluster.dayKeys.size > 0 && cluster.monthKeys.size > 0 && !cluster.monthKeys.has(month)) {
+      return false;
+    }
+    return true;
+  };
+
+  const clusterScore = (tx, cluster) => {
+    const day = txDayKey(tx);
+    const month = txMonthKey(tx);
+    let score = 0;
+
+    if (day && cluster.dayKeys.has(day)) {
+      score += 1.4;
+    } else if (day && cluster.dayKeys.size === 0) {
+      score += 0.6;
+    } else if (!day && cluster.dayKeys.size > 0) {
+      score += 0.35;
+    } else {
+      score += 0.25;
+    }
+
+    if (month && cluster.monthKeys.has(month)) {
+      score += 0.8;
+    } else if (month && cluster.monthKeys.size === 0) {
+      score += 0.35;
+    } else if (!month && cluster.monthKeys.size > 0) {
+      score += 0.15;
+    } else {
+      score += 0.1;
+    }
+
+    score += cluster.sources.has(tx.source || 'unknown') ? -0.04 : 0.12;
+    return score;
+  };
+
+  const addToCluster = (cluster, tx) => {
+    cluster.items.push(tx);
+    cluster.sources.add(tx.source || 'unknown');
+    const day = txDayKey(tx);
+    const month = txMonthKey(tx);
+    if (day) cluster.dayKeys.add(day);
+    if (month) cluster.monthKeys.add(month);
+  };
 
   groups.forEach((list) => {
     if (list.length <= 1) {
@@ -766,15 +813,58 @@ const dedupeAcrossSourcesBySignature = (rows) => {
       return;
     }
 
-    const keepCount = Math.max(...Array.from(sourceCount.values()));
     const sorted = [...list].sort((a, b) => {
       const scoreDiff = qualityScore(b) - qualityScore(a);
       if (scoreDiff !== 0) return scoreDiff;
       return a.__importOrder - b.__importOrder;
     });
 
-    deduped.push(...sorted.slice(0, keepCount));
-    removedCount += Math.max(0, sorted.length - keepCount);
+    const clusters = [];
+    sorted.forEach((tx) => {
+      let bestIndex = -1;
+      let bestScore = -Infinity;
+
+      for (let i = 0; i < clusters.length; i += 1) {
+        const candidate = clusters[i];
+        if (!canJoinCluster(tx, candidate)) continue;
+        const score = clusterScore(tx, candidate);
+        if (score > bestScore) {
+          bestScore = score;
+          bestIndex = i;
+        }
+      }
+
+      if (bestIndex === -1) {
+        const cluster = {
+          items: [],
+          sources: new Set(),
+          dayKeys: new Set(),
+          monthKeys: new Set(),
+        };
+        addToCluster(cluster, tx);
+        clusters.push(cluster);
+      } else {
+        addToCluster(clusters[bestIndex], tx);
+      }
+    });
+
+    clusters.forEach((cluster) => {
+      const countBySource = new Map();
+      cluster.items.forEach((tx) => {
+        const sourceId = tx.source || 'unknown';
+        countBySource.set(sourceId, (countBySource.get(sourceId) || 0) + 1);
+      });
+
+      const keepCount = Math.max(...Array.from(countBySource.values()));
+      const ordered = [...cluster.items].sort((a, b) => {
+        const scoreDiff = qualityScore(b) - qualityScore(a);
+        if (scoreDiff !== 0) return scoreDiff;
+        return a.__importOrder - b.__importOrder;
+      });
+
+      deduped.push(...ordered.slice(0, keepCount));
+      removedCount += Math.max(0, ordered.length - keepCount);
+    });
   });
 
   return { deduped, removedCount };
@@ -1034,6 +1124,7 @@ const dedupeTransactions = (transactions) => {
       return;
     }
 
+    const componentRows = [];
     const bucketMap = new Map();
     component.forEach((sourceId) => {
       const rows = sourceMap.get(sourceId) || [];
@@ -1062,16 +1153,20 @@ const dedupeTransactions = (transactions) => {
           return a.__importOrder - b.__importOrder;
         });
 
-        deduped.push(...sorted.slice(0, keepCount));
+        componentRows.push(...sorted.slice(0, keepCount));
         duplicateCount += Math.max(0, sorted.length - keepCount);
       });
     });
+
+    const crossSourcePass = dedupeAcrossSourcesBySignature(componentRows);
+    deduped.push(...crossSourcePass.deduped);
+    duplicateCount += crossSourcePass.removedCount;
   });
 
-  const crossSourcePass = dedupeAcrossSourcesBySignature(deduped);
-  duplicateCount += crossSourcePass.removedCount;
+  const fallbackCrossSourcePass = dedupeAcrossSourcesBySignature(deduped);
+  duplicateCount += fallbackCrossSourcePass.removedCount;
 
-  const normalized = crossSourcePass.deduped
+  const normalized = fallbackCrossSourcePass.deduped
     .sort((a, b) => a.__importOrder - b.__importOrder)
     .map((item) => {
       const cleaned = { ...item };
