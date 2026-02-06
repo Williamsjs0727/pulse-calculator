@@ -143,20 +143,15 @@ const PulseBlackCard = () => (
 );
 
 // ==================== Liquid Input Component ====================
-const LiquidInput = ({ value, onChange, label, subLabel, disabled, placeholder }) => {
-  const [displayVal, setDisplayVal] = useState('');
+const LiquidInput = ({ value, onChange, label, subLabel, disabled }) => {
+  const [draftVal, setDraftVal] = useState('');
   const [isFocused, setIsFocused] = useState(false);
   const inputRef = useRef(null);
-
-  useEffect(() => {
-    if (document.activeElement !== inputRef.current) {
-      setDisplayVal(value > 0 ? value.toString() : '');
-    }
-  }, [value]);
+  const displayVal = isFocused ? draftVal : (value > 0 ? value.toString() : '');
 
   const handleCalculate = () => {
     if (disabled) return;
-    const raw = displayVal.trim();
+    const raw = draftVal.trim();
     if (!raw) {
       onChange(0);
       return;
@@ -167,7 +162,9 @@ const LiquidInput = ({ value, onChange, label, subLabel, disabled, placeholder }
       if (isFinite(result) && !isNaN(result)) {
         onChange(Math.max(0, result));
       }
-    } catch (e) {}
+    } catch {
+      return;
+    }
   };
 
   const containerClasses = `
@@ -225,9 +222,12 @@ const LiquidInput = ({ value, onChange, label, subLabel, disabled, placeholder }
             type="text"
             disabled={disabled}
             value={displayVal}
-            onFocus={() => setIsFocused(true)}
+            onFocus={() => {
+              setDraftVal(value > 0 ? value.toString() : '');
+              setIsFocused(true);
+            }}
             onBlur={() => { setIsFocused(false); handleCalculate(); }}
-            onChange={(e) => setDisplayVal(e.target.value)}
+            onChange={(e) => setDraftVal(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && inputRef.current.blur()}
             placeholder="0"
             className={`w-full bg-transparent border-none outline-none ring-0 appearance-none text-2xl md:text-3xl font-bold p-0 m-0 font-mono tracking-tight
