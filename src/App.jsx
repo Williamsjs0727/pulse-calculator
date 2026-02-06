@@ -1198,8 +1198,8 @@ export default function PulseLiquidFixed() {
 
       {/* 悬浮导航栏 */}
       <nav className="fixed top-4 md:top-6 left-0 right-0 z-50 px-4 flex justify-center">
-        <div className="bg-white/70 dark:bg-gray-900/70 backdrop-blur-2xl rounded-[1.4rem] md:rounded-full shadow-[0_10px_40px_-10px_rgba(0,0,0,0.1)] border border-white/40 dark:border-white/10 px-3 py-2 md:pl-6 md:pr-2 md:py-2 flex flex-col md:flex-row items-stretch md:items-center gap-2 md:gap-6 w-full max-w-[390px] md:max-w-max transition-all duration-300">
-          <div className="flex items-center gap-2 min-w-0">
+        <div className="bg-white/70 dark:bg-gray-900/70 backdrop-blur-2xl rounded-[1.4rem] md:rounded-full shadow-[0_10px_40px_-10px_rgba(0,0,0,0.1)] border border-white/40 dark:border-white/10 px-3 py-2 md:pl-6 md:pr-2 md:py-2 flex flex-col md:flex-row items-center gap-2 md:gap-6 w-full max-w-[390px] md:max-w-max transition-all duration-300 text-center">
+          <div className="flex items-center justify-center gap-2 min-w-0 w-full md:w-auto">
             <div className="w-7 h-7 md:w-8 md:h-8 rounded-full bg-black dark:bg-white flex items-center justify-center text-white dark:text-black shadow-lg">
                <div className="scale-75"><Icons.Diamond /></div>
             </div>
@@ -1208,7 +1208,7 @@ export default function PulseLiquidFixed() {
             </span>
           </div>
           
-          <div className="flex items-center gap-1.5 w-full md:w-auto flex-wrap md:flex-nowrap">
+          <div className="flex items-center justify-center gap-1.5 w-full md:w-auto flex-wrap md:flex-nowrap">
             <div className="bg-gray-100/50 dark:bg-white/10 p-1 rounded-full flex backdrop-blur-md w-full sm:flex-1 md:w-auto md:flex-none">
               {['monthly', 'yearly'].map(t => (
                 <button 
@@ -1234,15 +1234,20 @@ export default function PulseLiquidFixed() {
               <option value="reconcile">对账</option>
               <option value="estimate">估算</option>
             </select>
-            <select
-              value={themeMode}
-              onChange={(event) => setThemeMode(event.target.value)}
-              className="rounded-full px-2.5 py-2 text-[10px] md:text-xs font-bold bg-white/80 dark:bg-black/40 border border-white/40 dark:border-white/10 text-gray-600 dark:text-gray-200 backdrop-blur-md w-[100px] md:w-auto"
-            >
-              <option value="system">主题</option>
-              <option value="light">浅色</option>
-              <option value="dark">深色</option>
-            </select>
+            <div className="relative w-[132px] md:w-auto">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] md:text-xs font-bold text-gray-500 dark:text-gray-300 pointer-events-none">
+                主题
+              </span>
+              <select
+                value={themeMode}
+                onChange={(event) => setThemeMode(event.target.value)}
+                className="rounded-full pl-11 pr-2.5 py-2 text-[10px] md:text-xs font-bold bg-white/80 dark:bg-black/40 border border-white/40 dark:border-white/10 text-gray-600 dark:text-gray-200 backdrop-blur-md w-full"
+              >
+                <option value="system">自动</option>
+                <option value="light">浅色</option>
+                <option value="dark">深色</option>
+              </select>
+            </div>
           </div>
         </div>
       </nav>
@@ -1256,10 +1261,13 @@ export default function PulseLiquidFixed() {
 
         <section className="bg-white/30 dark:bg-white/5 backdrop-blur-xl rounded-3xl px-5 py-4 border border-white/20 dark:border-white/10">
           <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-2">计算模式说明</div>
-          <div className="text-sm text-gray-700 dark:text-gray-200 leading-relaxed">
-            <span className="font-semibold text-emerald-600 dark:text-emerald-300">对账模式</span>：更接近 HSBC 的算法，RC 数量更准确。
-            <span className="mx-2">|</span>
-            <span className="font-semibold text-amber-600 dark:text-amber-300">估算模式</span>：直接按百分比计算，结果可能有误差。
+          <div className="text-sm text-gray-700 dark:text-gray-200 leading-relaxed space-y-1.5">
+            <div>
+              <span className="font-semibold text-emerald-600 dark:text-emerald-300">对账模式</span>：更接近 HSBC 的算法，RC 数量更准确。
+            </div>
+            <div>
+              <span className="font-semibold text-amber-600 dark:text-amber-300">估算模式</span>：直接按百分比计算，结果可能有误差。
+            </div>
           </div>
           <div className="text-[11px] text-gray-500 dark:text-gray-400 mt-2">
             建议优先按月精准计算；按年计算在存在内地餐饮消费时会有误差。
@@ -1461,7 +1469,7 @@ export default function PulseLiquidFixed() {
                <div className="flex flex-col justify-between">
                  <div className="space-y-4">
                     <div className="text-gray-500 text-[10px] md:text-xs font-bold uppercase tracking-[0.2em] mb-4">
-                      {calcMode === 'reconcile' ? 'Total Reconciled Rewards' : 'Total Estimated Rewards'}
+                      {calcMode === 'reconcile' ? '总奖励（对账） Total Reconciled Rewards' : '总奖励（估算） Total Estimated Rewards'}
                     </div>
                     <div className="text-[10px] text-gray-500">
                       {calcMode === 'reconcile'

@@ -718,6 +718,68 @@ const buildBucketKey = (tx) => {
   return `${month || 'UNKNOWN'}|${amountKey}|${signKey}`;
 };
 
+const buildCrossSourceDescriptionKey = (tx) => {
+  const normalized = normalizedDescriptionKey(tx.description);
+  if (normalized !== 'GENERIC') return normalized;
+  const raw = descDedupeKey(tx.description);
+  if (!raw) return 'GENERIC';
+  return `RAW:${raw}`;
+};
+
+const buildCrossSourceSignature = (tx) => {
+  const signKey = tx.isRefund ? 'R' : 'S';
+  const amountKey = amountToKey(tx.signedSpendImpact);
+  const day = txDayKey(tx);
+  const month = txMonthKey(tx);
+  const descriptionKey = buildCrossSourceDescriptionKey(tx);
+  const scope = day ? `D:${day}` : `M:${month || 'UNKNOWN'}`;
+  return `${scope}|${descriptionKey}|${amountKey}|${signKey}`;
+};
+
+const dedupeAcrossSourcesBySignature = (rows) => {
+  const groups = new Map();
+
+  rows.forEach((tx) => {
+    const key = buildCrossSourceSignature(tx);
+    const list = groups.get(key) || [];
+    list.push(tx);
+    groups.set(key, list);
+  });
+
+  const deduped = [];
+  let removedCount = 0;
+
+  groups.forEach((list) => {
+    if (list.length <= 1) {
+      deduped.push(...list);
+      return;
+    }
+
+    const sourceCount = new Map();
+    list.forEach((tx) => {
+      const sourceId = tx.source || 'unknown';
+      sourceCount.set(sourceId, (sourceCount.get(sourceId) || 0) + 1);
+    });
+
+    if (sourceCount.size <= 1) {
+      deduped.push(...list);
+      return;
+    }
+
+    const keepCount = Math.max(...Array.from(sourceCount.values()));
+    const sorted = [...list].sort((a, b) => {
+      const scoreDiff = qualityScore(b) - qualityScore(a);
+      if (scoreDiff !== 0) return scoreDiff;
+      return a.__importOrder - b.__importOrder;
+    });
+
+    deduped.push(...sorted.slice(0, keepCount));
+    removedCount += Math.max(0, sorted.length - keepCount);
+  });
+
+  return { deduped, removedCount };
+};
+
 const toTokenSet = (text) =>
   new Set(
     safeString(text)
@@ -1006,7 +1068,10 @@ const dedupeTransactions = (transactions) => {
     });
   });
 
-  const normalized = deduped
+  const crossSourcePass = dedupeAcrossSourcesBySignature(deduped);
+  duplicateCount += crossSourcePass.removedCount;
+
+  const normalized = crossSourcePass.deduped
     .sort((a, b) => a.__importOrder - b.__importOrder)
     .map((item) => {
       const cleaned = { ...item };
