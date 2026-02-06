@@ -291,6 +291,7 @@ const SmartImportPanel = ({ onReplaceMonths, onAppendMonths }) => {
   const [statusText, setStatusText] = useState('');
   const [errorText, setErrorText] = useState('');
   const [importReport, setImportReport] = useState(null);
+  const [dismissedDuplicateGroupKeys, setDismissedDuplicateGroupKeys] = useState([]);
   const [isImporting, setIsImporting] = useState(false);
   const [showAllForReview, setShowAllForReview] = useState(false);
   const fileInputRef = useRef(null);
@@ -304,6 +305,145 @@ const SmartImportPanel = ({ onReplaceMonths, onAppendMonths }) => {
     const sourceRows = showAllForReview ? transactions : transactions.filter((tx) => tx.needsReview);
     return sourceRows;
   }, [transactions, showAllForReview]);
+
+  const sourceRootFromTx = (source) =>
+    String(source || '').replace(/-ocr(?:-(?:pre|raw))?-(lines|text)$/i, '');
+
+  const sourceLabelFromTx = (source) => {
+    const root = sourceRootFromTx(source);
+    if (!root) return '未知来源';
+    const match = root.match(/^([a-z]+)-(\d+)-/i);
+    if (match) return `${match[1].toUpperCase()} #${Number(match[2]) + 1}`;
+    if (root === 'text') return '粘贴文本';
+    return root.length > 24 ? `${root.slice(0, 24)}...` : root;
+  };
+
+  const potentialDuplicateGroups = useMemo(() => {
+    if (transactions.length <= 1) return [];
+    const localSourceRoot = (source) =>
+      String(source || '').replace(/-ocr(?:-(?:pre|raw))?-(lines|text)$/i, '');
+    const normalizeDuplicateDesc = (text) =>
+      String(text || '')
+        .toUpperCase()
+        .replace(/UN[LI1]ONPAY/g, 'UNIONPAY')
+        .replace(/MEITUA[MN]/g, 'MEITUAN')
+        .replace(/RETU[RNM]/g, 'RETURN')
+        .replace(/[^A-Z0-9\u4E00-\u9FFF]+/g, '');
+    const levenshteinDistance = (a, b) => {
+      if (a === b) return 0;
+      if (!a.length) return b.length;
+      if (!b.length) return a.length;
+      const dp = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+      for (let i = 0; i <= a.length; i += 1) dp[i][0] = i;
+      for (let j = 0; j <= b.length; j += 1) dp[0][j] = j;
+      for (let i = 1; i <= a.length; i += 1) {
+        for (let j = 1; j <= b.length; j += 1) {
+          const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+          dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost);
+        }
+      }
+      return dp[a.length][b.length];
+    };
+    const duplicateSimilarity = (txA, txB) => {
+      const descA = normalizeDuplicateDesc(txA.description);
+      const descB = normalizeDuplicateDesc(txB.description);
+      if (!descA || !descB) return 0;
+      if (descA === descB) return 1;
+      const base = Math.max(descA.length, descB.length);
+      if (!base) return 0;
+      return 1 - levenshteinDistance(descA, descB) / base;
+    };
+    const txDateKey = (tx) => {
+      if (!tx?.date) return '';
+      const day = String(tx.date).slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(day)) return day;
+      return '';
+    };
+
+    const n = transactions.length;
+    const parent = Array.from({ length: n }, (_, idx) => idx);
+    const find = (x) => {
+      let current = x;
+      while (parent[current] !== current) {
+        parent[current] = parent[parent[current]];
+        current = parent[current];
+      }
+      return current;
+    };
+    const union = (a, b) => {
+      const ra = find(a);
+      const rb = find(b);
+      if (ra !== rb) parent[rb] = ra;
+    };
+
+    for (let i = 0; i < n; i += 1) {
+      for (let j = i + 1; j < n; j += 1) {
+        const a = transactions[i];
+        const b = transactions[j];
+        if (Boolean(a.isRefund) !== Boolean(b.isRefund)) continue;
+
+        const amountA = Math.abs(Number(a.signedSpendImpact || a.amount || 0));
+        const amountB = Math.abs(Number(b.signedSpendImpact || b.amount || 0));
+        if (Math.abs(amountA - amountB) > 0.01) continue;
+
+        const monthA = String(a.monthKey || '').slice(0, 7);
+        const monthB = String(b.monthKey || '').slice(0, 7);
+        if (monthA && monthB && monthA !== monthB) continue;
+
+        const sourceA = localSourceRoot(a.source);
+        const sourceB = localSourceRoot(b.source);
+        const dateA = txDateKey(a);
+        const dateB = txDateKey(b);
+        const sameDay = Boolean(dateA && dateB && dateA === dateB);
+        const crossSource = sourceA && sourceB && sourceA !== sourceB;
+
+        if (!crossSource && sameDay) continue;
+        if (!crossSource && !dateA && !dateB) continue;
+
+        const similarity = duplicateSimilarity(a, b);
+        if (similarity < 0.8) continue;
+        union(i, j);
+      }
+    }
+
+    const clusters = new Map();
+    for (let i = 0; i < n; i += 1) {
+      const root = find(i);
+      const list = clusters.get(root) || [];
+      list.push(transactions[i]);
+      clusters.set(root, list);
+    }
+
+    return Array.from(clusters.values())
+      .filter((group) => group.length > 1)
+      .map((group) => {
+        const ordered = [...group].sort((a, b) => {
+          const scoreA = (a.monthKey ? 2 : 0) + (a.categoryUncertain ? 0 : 1) + (Number(a.confidence) || 0);
+          const scoreB = (b.monthKey ? 2 : 0) + (b.categoryUncertain ? 0 : 1) + (Number(b.confidence) || 0);
+          if (scoreA !== scoreB) return scoreB - scoreA;
+          return String(a.id).localeCompare(String(b.id));
+        });
+        const key = ordered.map((tx) => tx.id).sort().join('|');
+        return {
+          key,
+          keepId: ordered[0].id,
+          items: ordered,
+        };
+      })
+      .filter((group) => !dismissedDuplicateGroupKeys.includes(group.key));
+  }, [transactions, dismissedDuplicateGroupKeys]);
+
+  const removeDuplicateGroupKeeping = (groupKey, keepId) => {
+    const target = potentialDuplicateGroups.find((group) => group.key === groupKey);
+    if (!target) return;
+    const ids = new Set(target.items.map((item) => item.id));
+    setTransactions((prev) => prev.filter((tx) => !ids.has(tx.id) || tx.id === keepId));
+    setDismissedDuplicateGroupKeys((prev) => [...prev, groupKey]);
+  };
+
+  const dismissDuplicateGroup = (groupKey) => {
+    setDismissedDuplicateGroupKeys((prev) => [...prev, groupKey]);
+  };
 
   const mergeReviewedTransaction = (id, patch) => {
     setTransactions((prev) =>
@@ -352,6 +492,7 @@ const SmartImportPanel = ({ onReplaceMonths, onAppendMonths }) => {
     setIsImporting(true);
     setErrorText('');
     setImportReport(null);
+    setDismissedDuplicateGroupKeys([]);
     setStatusText(`${sourceLabel} 识别中，请稍候...`);
 
     try {
@@ -437,6 +578,7 @@ const SmartImportPanel = ({ onReplaceMonths, onAppendMonths }) => {
     if (!rawText.trim()) {
       setErrorText('请先粘贴 statement 文本。');
       setImportReport(null);
+      setDismissedDuplicateGroupKeys([]);
       return;
     }
 
@@ -450,6 +592,7 @@ const SmartImportPanel = ({ onReplaceMonths, onAppendMonths }) => {
 
     setTransactions(parsed);
     setImportReport(prepared.report || null);
+    setDismissedDuplicateGroupKeys([]);
     setErrorText('');
     const uncertainCount = parsed.filter((tx) => tx.needsReview).length;
     const extra = [];
@@ -555,14 +698,10 @@ const SmartImportPanel = ({ onReplaceMonths, onAppendMonths }) => {
       {importReport && (
         <div className="rounded-2xl border border-white/30 dark:border-white/10 bg-white/45 dark:bg-white/[0.04] px-4 py-4 space-y-4">
           <div className="text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">
-            重叠识别报告（截图级）
+            导入识别报告
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-            <div className="rounded-xl bg-white/60 dark:bg-black/20 px-3 py-2">
-              <div className="text-[10px] uppercase tracking-widest text-gray-500 dark:text-gray-400">重叠排重</div>
-              <div className="font-mono font-bold text-emerald-600 dark:text-emerald-300">{importReport.overlapRemovedCount || 0}</div>
-            </div>
             <div className="rounded-xl bg-white/60 dark:bg-black/20 px-3 py-2">
               <div className="text-[10px] uppercase tracking-widest text-gray-500 dark:text-gray-400">精确排重</div>
               <div className="font-mono font-bold text-blue-600 dark:text-blue-300">{importReport.exactRemovedCount || 0}</div>
@@ -593,31 +732,6 @@ const SmartImportPanel = ({ onReplaceMonths, onAppendMonths }) => {
             </div>
           )}
 
-          {(importReport.overlapPairs || []).length > 0 && (
-            <div className="space-y-2">
-              <div className="text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">重叠区匹配</div>
-              <div className="space-y-2">
-                {importReport.overlapPairs.map((pair, idx) => (
-                  <div key={`${pair.sourceARoot}-${pair.sourceBRoot}-${idx}`} className="rounded-xl border border-emerald-200/40 dark:border-emerald-400/20 bg-emerald-50/40 dark:bg-emerald-900/10 px-3 py-2">
-                    <div className="text-sm text-emerald-800 dark:text-emerald-200">
-                      {pair.sourceA} ↔ {pair.sourceB}：匹配 {pair.matchedCount} 笔（重叠 {pair.overlapRatio}%），已优先移除 {pair.removedSource} 的重复项。
-                    </div>
-                    {(pair.samples || []).length > 0 && (
-                      <div className="mt-1 text-[11px] text-emerald-900/80 dark:text-emerald-100/80 space-y-0.5">
-                        {pair.samples.map((sample, sampleIdx) => (
-                          <div key={`${pair.sourceARoot}-${sampleIdx}`}>
-                            {sample.date || '未知日期'} | {sample.description} | {sample.isRefund ? '+' : '-'}
-                            {sample.amount?.toLocaleString?.() ?? sample.amount}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {(importReport.nearDuplicateGroups || []).length > 0 && (
             <div className="space-y-2">
               <div className="text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">近似重复命中</div>
@@ -636,6 +750,54 @@ const SmartImportPanel = ({ onReplaceMonths, onAppendMonths }) => {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {potentialDuplicateGroups.length > 0 && (
+        <div className="rounded-2xl border border-orange-200/50 dark:border-orange-400/20 bg-orange-50/40 dark:bg-orange-900/10 px-4 py-4 space-y-3">
+          <div className="text-xs font-bold uppercase tracking-widest text-orange-700 dark:text-orange-300">
+            疑似重复交易（人工一键处理）
+          </div>
+          <div className="space-y-2">
+            {potentialDuplicateGroups.slice(0, 8).map((group, idx) => (
+              <div key={group.key} className="rounded-xl border border-orange-200/50 dark:border-orange-400/30 bg-white/70 dark:bg-black/20 px-3 py-3 space-y-2">
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                  <div className="text-sm text-orange-800 dark:text-orange-200">
+                    组 {idx + 1}：{group.items.length} 笔可能重复
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => removeDuplicateGroupKeeping(group.key, group.keepId)}
+                      className="px-3 py-1.5 rounded-lg bg-orange-600 text-white text-xs font-bold hover:opacity-90"
+                    >
+                      保留第一笔，删除其余
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => dismissDuplicateGroup(group.key)}
+                      className="px-3 py-1.5 rounded-lg bg-white/80 dark:bg-white/10 border border-orange-200 dark:border-orange-400/20 text-xs font-bold text-orange-700 dark:text-orange-200"
+                    >
+                      保留全部
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-1 text-[12px] text-gray-700 dark:text-gray-200">
+                  {group.items.map((tx) => (
+                    <div key={tx.id} className="flex flex-col md:flex-row md:items-center md:justify-between gap-1">
+                      <div>
+                        {(tx.date || tx.monthKey || '未知日期')} | {tx.description}
+                      </div>
+                      <div className="font-mono">
+                        {tx.isRefund ? '+' : '-'}
+                        {Math.abs(tx.signedSpendImpact || tx.amount || 0).toLocaleString()} | {sourceLabelFromTx(tx.source)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
