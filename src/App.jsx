@@ -457,6 +457,17 @@ const SmartImportPanel = ({ onReplaceMonths, onAppendMonths }) => {
       totalSpend: month.totalSpend,
       diningSpend: month.diningSpend,
       mobilePaySpend: month.mobilePaySpend,
+      totalRefundSpend: month.totalRefundSpend || 0,
+      diningRefundSpend: month.diningRefundSpend || 0,
+      mobileRefundSpend: month.mobileRefundSpend || 0,
+      totalNetSpend: month.totalNetSpend || 0,
+      diningNetSpend: month.diningNetSpend || 0,
+      mobileNetSpend: month.mobileNetSpend || 0,
+      rycTxnExtraRc: month.rycTxnExtraRc || 0,
+      mobileTxnExtraRc: month.mobileTxnExtraRc || 0,
+      pendingBaseClawback: month.pendingBaseClawback || 0,
+      pendingRycClawback: month.pendingRycClawback || 0,
+      pendingMobileClawback: month.pendingMobileClawback || 0,
     }));
   };
 
@@ -710,37 +721,6 @@ const toSyntheticMonthlyRows = (yearlyData) => {
   }));
 };
 
-const settleDiscreteRc = (carry, eligibleSpend, unitSpend, rcPerUnit) => {
-  const safeCarry = toSafeNumber(carry);
-  const safeSpend = toSafeNumber(eligibleSpend);
-  const combined = safeCarry + safeSpend;
-  const units = combined >= 0 ? Math.floor(combined / unitSpend) : Math.ceil(combined / unitSpend);
-  const rc = units * rcPerUnit;
-  const nextCarry = Number((combined - units * unitSpend).toFixed(2));
-  return { rc, units, nextCarry };
-};
-
-const applySignedSpendCap = (spend, used, cap) => {
-  const safeSpend = toSafeNumber(spend);
-  const safeUsed = Math.min(cap, Math.max(0, toSafeNumber(used)));
-
-  if (safeSpend > 0) {
-    const remaining = Math.max(0, cap - safeUsed);
-    const appliedSpend = Math.min(safeSpend, remaining);
-    const nextUsed = Number((safeUsed + appliedSpend).toFixed(2));
-    return { appliedSpend, nextUsed };
-  }
-
-  if (safeSpend < 0) {
-    const reducible = Math.min(-safeSpend, safeUsed);
-    const appliedSpend = -reducible;
-    const nextUsed = Number((safeUsed + appliedSpend).toFixed(2));
-    return { appliedSpend, nextUsed };
-  }
-
-  return { appliedSpend: 0, nextUsed: safeUsed };
-};
-
 const roundDiningPromotionRc = (value) => {
   if (value > 0) return Math.ceil(value);
   if (value < 0) return Math.floor(value);
@@ -761,9 +741,18 @@ const calculateEstimate = (mode, activities, inputData, options = {}) => {
 
   if (mode === 'monthly') {
     inputData.forEach((m) => {
-      const monthTotal = toSafeNumber(m.totalSpend);
-      const monthMobile = toSafeNumber(m.mobilePaySpend);
-      const monthDining = toSafeNumber(m.diningSpend);
+      const monthTotal = toSafeNumber(
+        m.totalNetSpend ??
+        (toSafeNumber(m.totalSpend) - toSafeNumber(m.totalRefundSpend))
+      );
+      const monthMobile = toSafeNumber(
+        m.mobileNetSpend ??
+        (toSafeNumber(m.mobilePaySpend) - toSafeNumber(m.mobileRefundSpend))
+      );
+      const monthDining = toSafeNumber(
+        m.diningNetSpend ??
+        (toSafeNumber(m.diningSpend) - toSafeNumber(m.diningRefundSpend))
+      );
       const base = monthTotal * CONSTANTS.BASE_RATE;
       rcBase += base;
       totalSpend += monthTotal;
@@ -852,6 +841,10 @@ const calculateEstimate = (mode, activities, inputData, options = {}) => {
     baseCarry: 0,
     rycCarry: 0,
     mpCarry: 0,
+    pendingBaseClawback: 0,
+    pendingRycClawback: 0,
+    pendingMobileClawback: 0,
+    pendingClawbackTotal: 0,
     asiaMiles: totalRc * CONSTANTS.RC_TO_ASIAMILES,
     returnRate: totalSpend > 0 ? (totalRc / totalSpend) * 100 : 0,
   };
@@ -870,70 +863,84 @@ const calculateReconcile = (mode, activities, inputData, options = {}) => {
   let mpUsed = 0;
   let diningUsed = 0;
   let baseCarry = 0;
-  let rycCarry = 0;
-  let mpCarry = 0;
+  let pendingBaseClawback = 0;
+  let pendingRycClawback = 0;
+  let pendingMobileClawback = 0;
 
   rows.forEach((m) => {
-    const monthTotal = toSafeNumber(m.totalSpend);
-    const monthMobile = toSafeNumber(m.mobilePaySpend);
-    const monthDining = toSafeNumber(m.diningSpend);
+    const monthTotal = Math.max(0, toSafeNumber(m.totalSpend));
+    const monthMobile = Math.max(0, toSafeNumber(m.mobilePaySpend));
+    const monthDining = Math.max(0, toSafeNumber(m.diningSpend));
+    const monthTotalRefund = Math.max(0, toSafeNumber(m.totalRefundSpend));
+    const monthMobileRefund = Math.max(0, toSafeNumber(m.mobileRefundSpend));
     totalSpend += monthTotal;
 
-    const baseSettlement = settleDiscreteRc(
-      baseCarry,
-      monthTotal,
-      CONSTANTS.RC_UNIT_SPEND,
-      CONSTANTS.BASE_RC_PER_UNIT
-    );
-    rcBase += baseSettlement.rc;
-    baseCarry = baseSettlement.nextCarry;
+    // HSBC 当前 Earned 口径：仅统计正向消费；退款先进入待扣回，不即时冲减 Earned。
+    baseCarry += monthTotal;
+    const baseUnits = Math.floor(baseCarry / CONSTANTS.RC_UNIT_SPEND);
+    rcBase += baseUnits * CONSTANTS.BASE_RC_PER_UNIT;
+    baseCarry = Number((baseCarry - baseUnits * CONSTANTS.RC_UNIT_SPEND).toFixed(2));
 
     if (activities.ryc) {
-      const rycEligible = applySignedSpendCap(monthTotal, rycUsed, CONSTANTS.RYC_CAP_RMB);
-      const rycSettlement = settleDiscreteRc(
-        rycCarry,
-        rycEligible.appliedSpend,
-        CONSTANTS.RC_UNIT_SPEND,
-        CONSTANTS.EXTRA_RC_PER_UNIT
-      );
-      rcRyc += rycSettlement.rc;
-      rycCarry = rycSettlement.nextCarry;
-      rycUsed = rycEligible.nextUsed;
+      const remainingRycCap = Math.max(0, CONSTANTS.RYC_CAP_RMB - rycUsed);
+      const rycEligibleSpend = Math.min(monthTotal, remainingRycCap);
+      const monthRycTxnExtra = Math.max(0, Math.floor(toSafeNumber(m.rycTxnExtraRc)));
+      const hasTxnLevelRyc = monthRycTxnExtra > 0 && Math.abs(rycEligibleSpend - monthTotal) < 0.01;
+
+      rcRyc += hasTxnLevelRyc
+        ? monthRycTxnExtra
+        : Math.floor(rycEligibleSpend / 50);
+      rycUsed = Number((rycUsed + rycEligibleSpend).toFixed(2));
     }
 
     if (activities.mobilePay) {
-      const mobileEligible = applySignedSpendCap(monthMobile, mpUsed, CONSTANTS.MP_CAP_RMB);
-      const mobileSettlement = settleDiscreteRc(
-        mpCarry,
-        mobileEligible.appliedSpend,
-        CONSTANTS.RC_UNIT_SPEND,
-        CONSTANTS.EXTRA_RC_PER_UNIT
-      );
-      rcMobile += mobileSettlement.rc;
-      mpCarry = mobileSettlement.nextCarry;
-      mpUsed = mobileEligible.nextUsed;
+      const remainingMobileCap = Math.max(0, CONSTANTS.MP_CAP_RMB - mpUsed);
+      const mobileEligibleSpend = Math.min(monthMobile, remainingMobileCap);
+      const monthMobileTxnExtra = Math.max(0, Math.floor(toSafeNumber(m.mobileTxnExtraRc)));
+      const hasTxnLevelMobile = monthMobileTxnExtra > 0 && Math.abs(mobileEligibleSpend - monthMobile) < 0.01;
+
+      rcMobile += hasTxnLevelMobile
+        ? monthMobileTxnExtra
+        : Math.floor(mobileEligibleSpend / 50);
+      mpUsed = Number((mpUsed + mobileEligibleSpend).toFixed(2));
     }
 
-    if (activities.dining && monthDining !== 0) {
+    if (activities.dining && monthDining > 0) {
       const thresholdPassed = Boolean(m.forceThreshold) || monthTotal >= CONSTANTS.DINING_THRESHOLD_RMB;
-      const positiveDining = Math.min(Math.max(monthDining, 0), CONSTANTS.DINING_MONTHLY_CAP_SPEND);
-      const negativeDining = Math.min(monthDining, 0);
-      let eligibleDiningSpend = (thresholdPassed ? positiveDining : 0) + negativeDining;
-
-      if (eligibleDiningSpend > 0) {
+      if (thresholdPassed) {
+        let eligibleDiningSpend = Math.min(monthDining, CONSTANTS.DINING_MONTHLY_CAP_SPEND);
         const remainingDining = Math.max(0, CONSTANTS.DINING_YEARLY_CAP_SPEND - diningUsed);
         eligibleDiningSpend = Math.min(eligibleDiningSpend, remainingDining);
         diningUsed += eligibleDiningSpend;
-      } else if (eligibleDiningSpend < 0) {
-        const reducible = Math.min(-eligibleDiningSpend, diningUsed);
-        eligibleDiningSpend = -reducible;
-        diningUsed += eligibleDiningSpend;
-      }
 
-      rcDiningPendingRaw +=
-        eligibleDiningSpend * CONSTANTS.DINING_A_RATE +
-        eligibleDiningSpend * CONSTANTS.DINING_B_RATE;
+        rcDiningPendingRaw +=
+          eligibleDiningSpend * CONSTANTS.DINING_A_RATE +
+          eligibleDiningSpend * CONSTANTS.DINING_B_RATE;
+      }
     }
+
+    const monthPendingBase = Math.max(
+      0,
+      Math.floor(
+        toSafeNumber(m.pendingBaseClawback) || (monthTotalRefund / CONSTANTS.RC_UNIT_SPEND)
+      )
+    );
+    const monthPendingRyc = Math.max(
+      0,
+      Math.floor(
+        toSafeNumber(m.pendingRycClawback) || Math.floor(monthTotalRefund / 50)
+      )
+    );
+    const monthPendingMobile = Math.max(
+      0,
+      Math.floor(
+        toSafeNumber(m.pendingMobileClawback) || Math.floor(monthMobileRefund / 50)
+      )
+    );
+
+    pendingBaseClawback += monthPendingBase;
+    pendingRycClawback += monthPendingRyc;
+    pendingMobileClawback += monthPendingMobile;
   });
 
   if (mode === 'yearly') {
@@ -959,8 +966,12 @@ const calculateReconcile = (mode, activities, inputData, options = {}) => {
     mpUsed,
     diningUsed,
     baseCarry,
-    rycCarry,
-    mpCarry,
+    rycCarry: 0,
+    mpCarry: 0,
+    pendingBaseClawback,
+    pendingRycClawback,
+    pendingMobileClawback,
+    pendingClawbackTotal: pendingBaseClawback + pendingRycClawback + pendingMobileClawback,
     asiaMiles: totalRc * CONSTANTS.RC_TO_ASIAMILES,
     returnRate: totalSpend > 0 ? (totalRc / totalSpend) * 100 : 0,
   };
@@ -973,6 +984,25 @@ function calculate(mode, activities, inputData, options = {}) {
   }
   return calculateReconcile(mode, activities, inputData, options);
 }
+
+const createMonthRecord = (id = Date.now()) => ({
+  id,
+  monthKey: '',
+  totalSpend: 0,
+  mobilePaySpend: 0,
+  diningSpend: 0,
+  totalRefundSpend: 0,
+  diningRefundSpend: 0,
+  mobileRefundSpend: 0,
+  totalNetSpend: 0,
+  diningNetSpend: 0,
+  mobileNetSpend: 0,
+  rycTxnExtraRc: 0,
+  mobileTxnExtraRc: 0,
+  pendingBaseClawback: 0,
+  pendingRycClawback: 0,
+  pendingMobileClawback: 0,
+});
 
 export default function PulseLiquidFixed() {
   const [activeTab, setActiveTab] = useState('monthly');
@@ -993,7 +1023,7 @@ export default function PulseLiquidFixed() {
     }
   });
   const [resolvedTheme, setResolvedTheme] = useState('light');
-  const [months, setMonths] = useState([{ id: 1, monthKey: '', totalSpend: 0, mobilePaySpend: 0, diningSpend: 0 }]);
+  const [months, setMonths] = useState([createMonthRecord(1)]);
   const [yearly, setYearly] = useState({ totalSpend: 0, mobilePaySpend: 0, diningSpend: 0, forceThreshold: true });
 
   const result = useMemo(
@@ -1007,7 +1037,7 @@ export default function PulseLiquidFixed() {
     [activeTab, activities, months, yearly, includePendingDining, calcMode]
   );
 
-  const addMonth = () => setMonths([...months, { id: Date.now(), monthKey: '', totalSpend: 0, mobilePaySpend: 0, diningSpend: 0 }]);
+  const addMonth = () => setMonths([...months, createMonthRecord()]);
   const removeMonth = (id) => setMonths(months.filter(m => m.id !== id));
   const updateMonth = (id, field, val) => setMonths(months.map(m => m.id === id ? { ...m, [field]: val } : m));
 
@@ -1301,6 +1331,19 @@ export default function PulseLiquidFixed() {
                       )}
                       <div className="text-[10px] text-gray-500 leading-relaxed">
                         打开开关后会把该待定值并入总 RC。
+                      </div>
+                    </div>
+                  )}
+                  {calcMode === 'reconcile' && result.pendingClawbackTotal > 0 && (
+                    <div className="rounded-2xl bg-amber-500/10 border border-amber-300/20 px-4 py-4 space-y-3">
+                      <div className="text-[10px] uppercase tracking-widest text-amber-300">
+                        待扣回 RC（不影响当前 Earned）
+                      </div>
+                      <div className="grid grid-cols-4 gap-3 text-[10px] text-amber-100 font-mono">
+                        <div>Base<br/><span className="text-sm font-bold">{result.pendingBaseClawback}</span></div>
+                        <div>RYC<br/><span className="text-sm font-bold">{result.pendingRycClawback}</span></div>
+                        <div>Mobile<br/><span className="text-sm font-bold">{result.pendingMobileClawback}</span></div>
+                        <div>Total<br/><span className="text-sm font-bold">{result.pendingClawbackTotal}</span></div>
                       </div>
                     </div>
                   )}

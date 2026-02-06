@@ -1107,18 +1107,44 @@ export const aggregateTransactionsByMonth = (transactions) => {
       totalSpend: 0,
       diningSpend: 0,
       mobilePaySpend: 0,
-      refundAbs: 0,
-      mobileRefundAbs: 0,
+      totalRefundSpend: 0,
+      diningRefundSpend: 0,
+      mobileRefundSpend: 0,
+      totalNetSpend: 0,
+      diningNetSpend: 0,
+      mobileNetSpend: 0,
+      rycTxnExtraRc: 0,
+      mobileTxnExtraRc: 0,
+      pendingBaseClawback: 0,
+      pendingRycClawback: 0,
+      pendingMobileClawback: 0,
       transactionCount: 0,
       reviewCount: 0,
     };
 
-    current.totalSpend += spendImpact;
-    if (transaction.isDining) current.diningSpend += spendImpact;
-    if (transaction.isMobilePay) current.mobilePaySpend += spendImpact;
-    if (spendImpact < 0) {
-      current.refundAbs += Math.abs(spendImpact);
-      if (transaction.isMobilePay) current.mobileRefundAbs += Math.abs(spendImpact);
+    current.totalNetSpend += spendImpact;
+    if (transaction.isDining) current.diningNetSpend += spendImpact;
+    if (transaction.isMobilePay) current.mobileNetSpend += spendImpact;
+
+    if (spendImpact > 0) {
+      current.totalSpend += spendImpact;
+      current.rycTxnExtraRc += Math.floor(spendImpact / 50);
+
+      if (transaction.isDining) current.diningSpend += spendImpact;
+      if (transaction.isMobilePay) {
+        current.mobilePaySpend += spendImpact;
+        current.mobileTxnExtraRc += Math.floor(spendImpact / 50);
+      }
+    } else if (spendImpact < 0) {
+      const refundAbs = Math.abs(spendImpact);
+      current.totalRefundSpend += refundAbs;
+      current.pendingRycClawback += Math.floor(refundAbs / 50);
+
+      if (transaction.isDining) current.diningRefundSpend += refundAbs;
+      if (transaction.isMobilePay) {
+        current.mobileRefundSpend += refundAbs;
+        current.pendingMobileClawback += Math.floor(refundAbs / 50);
+      }
     }
     current.transactionCount += 1;
     if (transaction.needsReview) current.reviewCount += 1;
@@ -1132,24 +1158,33 @@ export const aggregateTransactionsByMonth = (transactions) => {
       let totalSpend = round2(item.totalSpend);
       let diningSpend = round2(item.diningSpend);
       let mobilePaySpend = round2(item.mobilePaySpend);
+      const totalRefundSpend = round2(Math.max(0, item.totalRefundSpend || 0));
+      const diningRefundSpend = round2(Math.max(0, item.diningRefundSpend || 0));
+      const mobileRefundSpend = round2(Math.max(0, item.mobileRefundSpend || 0));
+      const totalNetSpend = round2(item.totalNetSpend || 0);
+      const diningNetSpend = round2(item.diningNetSpend || 0);
+      const mobileNetSpend = round2(item.mobileNetSpend || 0);
 
       totalSpend = Math.max(0, totalSpend);
       diningSpend = Math.max(0, diningSpend);
       mobilePaySpend = Math.max(0, mobilePaySpend);
-
-      if (mobilePaySpend > 0 && totalSpend < mobilePaySpend) {
-        const mobileRefundAbs = round2(item.mobileRefundAbs || item.refundAbs || 0);
-        mobilePaySpend = Math.max(0, round2(mobilePaySpend - mobileRefundAbs));
-        if (mobilePaySpend > totalSpend) {
-          mobilePaySpend = totalSpend;
-        }
-      }
 
       return {
         ...item,
         totalSpend,
         diningSpend,
         mobilePaySpend,
+        totalRefundSpend,
+        diningRefundSpend,
+        mobileRefundSpend,
+        totalNetSpend,
+        diningNetSpend,
+        mobileNetSpend,
+        pendingBaseClawback: Math.floor(totalRefundSpend / 250),
+        pendingRycClawback: Math.max(0, Math.floor(item.pendingRycClawback || 0)),
+        pendingMobileClawback: Math.max(0, Math.floor(item.pendingMobileClawback || 0)),
+        rycTxnExtraRc: Math.max(0, Math.floor(item.rycTxnExtraRc || 0)),
+        mobileTxnExtraRc: Math.max(0, Math.floor(item.mobileTxnExtraRc || 0)),
       };
     });
 };
