@@ -130,7 +130,7 @@ const safeString = (value) => {
 };
 
 const sourceRootKey = (sourceId) =>
-  safeString(sourceId).replace(/-ocr-(lines|text)$/i, '');
+  safeString(sourceId).replace(/-ocr(?:-(?:pre|raw))?-(lines|text)$/i, '');
 
 const sourceLabel = (sourceId) => {
   const root = sourceRootKey(sourceId);
@@ -682,6 +682,56 @@ const parseTransactionsFromOcrData = (ocrData, source = 'image-lines') => {
   return parseTransactionsFromRawText(rows.join('\n'), source);
 };
 
+const preprocessImageForOcr = async (file) => {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return null;
+  if (!file) return null;
+
+  let bitmap = null;
+  try {
+    bitmap = await createImageBitmap(file);
+    const maxWidth = 2200;
+    const scale = Math.min(2.2, maxWidth / Math.max(bitmap.width, 1));
+    const width = Math.max(bitmap.width, Math.round(bitmap.width * scale));
+    const height = Math.max(bitmap.height, Math.round(bitmap.height * scale));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext('2d', { alpha: false, willReadFrequently: true });
+    if (!ctx) return null;
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, width, height);
+    ctx.drawImage(bitmap, 0, 0, width, height);
+
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const pixels = imageData.data;
+    for (let i = 0; i < pixels.length; i += 4) {
+      const gray = 0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2];
+      const contrastBoosted = (gray - 128) * 1.35 + 128;
+      const normalized = clamp(Math.round(contrastBoosted), 0, 255);
+      const cleaned = normalized > 146 ? 255 : normalized < 84 ? 0 : normalized;
+      pixels[i] = cleaned;
+      pixels[i + 1] = cleaned;
+      pixels[i + 2] = cleaned;
+    }
+    ctx.putImageData(imageData, 0, 0);
+
+    const blob = await new Promise((resolve) => {
+      canvas.toBlob((value) => resolve(value), 'image/png', 1);
+    });
+
+    return blob || null;
+  } catch {
+    return null;
+  } finally {
+    if (bitmap && typeof bitmap.close === 'function') {
+      bitmap.close();
+    }
+  }
+};
+
 const parseTransactionFromPipeTableLine = (line, source, index) => {
   if (!line.includes('|')) return null;
 
@@ -873,16 +923,26 @@ export const parseImageStatementFile = async (file, sourceTag = 'image') => {
   }
 
   try {
-    const result = await worker.recognize(file);
-    const ocrData = result?.data || {};
-    const fromStructuredLines = parseTransactionsFromOcrData(ocrData, `${sourceTag}-ocr-lines`);
-    const fromPlainText = parseTransactionsFromRawText(ocrData?.text || '', `${sourceTag}-ocr-text`);
+    const extractTransactions = (ocrData, variantTag) => {
+      const structured = parseTransactionsFromOcrData(ocrData, `${variantTag}-lines`);
+      const plain = parseTransactionsFromRawText(ocrData?.text || '', `${variantTag}-text`);
+      if (structured.length && plain.length) return [...structured, ...plain];
+      if (structured.length) return structured;
+      return plain;
+    };
 
-    if (fromStructuredLines.length && fromPlainText.length) {
-      return [...fromStructuredLines, ...fromPlainText];
+    const merged = [];
+    const preprocessed = await preprocessImageForOcr(file);
+
+    if (preprocessed) {
+      const preResult = await worker.recognize(preprocessed);
+      merged.push(...extractTransactions(preResult?.data || {}, `${sourceTag}-ocr-pre`));
     }
-    if (fromStructuredLines.length) return fromStructuredLines;
-    return fromPlainText;
+
+    const rawResult = await worker.recognize(file);
+    merged.push(...extractTransactions(rawResult?.data || {}, `${sourceTag}-ocr-raw`));
+
+    return merged;
   } finally {
     await worker.terminate();
   }
@@ -1253,6 +1313,7 @@ const removeOverlappingScreenshotMatches = (sourceMap) => {
     for (let j = i + 1; j < sourceIds.length; j += 1) {
       const sourceA = sourceIds[i];
       const sourceB = sourceIds[j];
+      if (sourceRootKey(sourceA) === sourceRootKey(sourceB)) continue;
       const rowsA = sourceRowsMap.get(sourceA) || [];
       const rowsB = sourceRowsMap.get(sourceB) || [];
       if (rowsA.length < 3 || rowsB.length < 3) continue;
