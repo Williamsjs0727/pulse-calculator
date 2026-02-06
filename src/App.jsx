@@ -49,6 +49,9 @@ const GlobalStyles = () => (
 
 // ==================== 常量定义 ====================
 const CONSTANTS = {
+  RC_UNIT_SPEND: 250,
+  BASE_RC_PER_UNIT: 1,
+  EXTRA_RC_PER_UNIT: 5,
   BASE_RATE: 0.004, 
   RYC_RATE: 0.02,
   RYC_CAP_RMB: 100000, 
@@ -667,38 +670,124 @@ const SmartImportPanel = ({ onReplaceMonths, onAppendMonths }) => {
 
 // ==================== Main App ====================
 
-function calculate(mode, activities, inputData, options = {}) {
+const toSafeNumber = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const sortMonthlyRows = (inputData) => {
+  const rows = Array.isArray(inputData) ? inputData : [];
+  return rows
+    .map((row, index) => ({
+      ...row,
+      totalSpend: toSafeNumber(row.totalSpend),
+      mobilePaySpend: toSafeNumber(row.mobilePaySpend),
+      diningSpend: toSafeNumber(row.diningSpend),
+      __index: index,
+    }))
+    .sort((a, b) => {
+      if (a.monthKey && b.monthKey && a.monthKey !== b.monthKey) {
+        return String(a.monthKey).localeCompare(String(b.monthKey));
+      }
+      return a.__index - b.__index;
+    });
+};
+
+const toSyntheticMonthlyRows = (yearlyData) => {
+  const monthCount = 12;
+  const yearlyTotal = toSafeNumber(yearlyData?.totalSpend);
+  const yearlyMobile = toSafeNumber(yearlyData?.mobilePaySpend);
+  const yearlyDining = toSafeNumber(yearlyData?.diningSpend);
+  const forceThreshold = Boolean(yearlyData?.forceThreshold);
+
+  return Array.from({ length: monthCount }, (_, index) => ({
+    monthKey: `Y-${String(index + 1).padStart(2, '0')}`,
+    totalSpend: yearlyTotal / monthCount,
+    mobilePaySpend: yearlyMobile / monthCount,
+    diningSpend: yearlyDining / monthCount,
+    forceThreshold,
+    __index: index,
+  }));
+};
+
+const settleDiscreteRc = (carry, eligibleSpend, unitSpend, rcPerUnit) => {
+  const safeCarry = toSafeNumber(carry);
+  const safeSpend = toSafeNumber(eligibleSpend);
+  const combined = safeCarry + safeSpend;
+  const units = combined >= 0 ? Math.floor(combined / unitSpend) : Math.ceil(combined / unitSpend);
+  const rc = units * rcPerUnit;
+  const nextCarry = Number((combined - units * unitSpend).toFixed(2));
+  return { rc, units, nextCarry };
+};
+
+const applySignedSpendCap = (spend, used, cap) => {
+  const safeSpend = toSafeNumber(spend);
+  const safeUsed = Math.min(cap, Math.max(0, toSafeNumber(used)));
+
+  if (safeSpend > 0) {
+    const remaining = Math.max(0, cap - safeUsed);
+    const appliedSpend = Math.min(safeSpend, remaining);
+    const nextUsed = Number((safeUsed + appliedSpend).toFixed(2));
+    return { appliedSpend, nextUsed };
+  }
+
+  if (safeSpend < 0) {
+    const reducible = Math.min(-safeSpend, safeUsed);
+    const appliedSpend = -reducible;
+    const nextUsed = Number((safeUsed + appliedSpend).toFixed(2));
+    return { appliedSpend, nextUsed };
+  }
+
+  return { appliedSpend: 0, nextUsed: safeUsed };
+};
+
+const roundDiningPromotionRc = (value) => {
+  if (value > 0) return Math.ceil(value);
+  if (value < 0) return Math.floor(value);
+  return 0;
+};
+
+const calculateEstimate = (mode, activities, inputData, options = {}) => {
   const includePendingDining = Boolean(options.includePendingDining);
-  let totalRc = 0, totalSpend = 0;
-  let rcBase = 0, rcRyc = 0, rcMobile = 0;
+  let totalRc = 0;
+  let totalSpend = 0;
+  let rcBase = 0;
+  let rcRyc = 0;
+  let rcMobile = 0;
   let rcDiningPending = 0;
-  let rycUsed = 0, mpUsed = 0, diningUsed = 0;
+  let rycUsed = 0;
+  let mpUsed = 0;
+  let diningUsed = 0;
 
   if (mode === 'monthly') {
-    inputData.forEach(m => {
-      const base = m.totalSpend * CONSTANTS.BASE_RATE;
-      rcBase += base; totalSpend += m.totalSpend;
+    inputData.forEach((m) => {
+      const monthTotal = toSafeNumber(m.totalSpend);
+      const monthMobile = toSafeNumber(m.mobilePaySpend);
+      const monthDining = toSafeNumber(m.diningSpend);
+      const base = monthTotal * CONSTANTS.BASE_RATE;
+      rcBase += base;
+      totalSpend += monthTotal;
 
       if (activities.ryc) {
         const remaining = Math.max(0, CONSTANTS.RYC_CAP_RMB - rycUsed);
-        const eligibleRaw = Math.min(m.totalSpend, remaining);
+        const eligibleRaw = Math.min(monthTotal, remaining);
         const eligible = Math.max(-rycUsed, eligibleRaw);
         rcRyc += eligible * CONSTANTS.RYC_RATE;
         rycUsed += eligible;
       }
       if (activities.mobilePay) {
         const remaining = Math.max(0, CONSTANTS.MP_CAP_RMB - mpUsed);
-        const eligibleRaw = Math.min(m.mobilePaySpend, remaining);
+        const eligibleRaw = Math.min(monthMobile, remaining);
         const eligible = Math.max(-mpUsed, eligibleRaw);
         rcMobile += eligible * CONSTANTS.MP_RATE;
         mpUsed += eligible;
       }
-      if (activities.dining && m.diningSpend !== 0) {
+      if (activities.dining && monthDining !== 0) {
         const monthlyCapped =
-          Math.sign(m.diningSpend) * Math.min(Math.abs(m.diningSpend), CONSTANTS.DINING_MONTHLY_CAP_SPEND);
+          Math.sign(monthDining) * Math.min(Math.abs(monthDining), CONSTANTS.DINING_MONTHLY_CAP_SPEND);
         const eligibleByThreshold =
           monthlyCapped > 0
-            ? (m.totalSpend >= CONSTANTS.DINING_THRESHOLD_RMB ? monthlyCapped : 0)
+            ? (monthTotal >= CONSTANTS.DINING_THRESHOLD_RMB ? monthlyCapped : 0)
             : monthlyCapped;
         const eligibleDiningSpend = Math.max(-diningUsed, eligibleByThreshold);
 
@@ -718,7 +807,7 @@ function calculate(mode, activities, inputData, options = {}) {
     });
   } else {
     const y = inputData;
-    totalSpend = y.totalSpend;
+    totalSpend = toSafeNumber(y.totalSpend);
     rcBase = totalSpend * CONSTANTS.BASE_RATE;
 
     if (activities.ryc) {
@@ -726,44 +815,176 @@ function calculate(mode, activities, inputData, options = {}) {
       rcRyc = rycUsed * CONSTANTS.RYC_RATE;
     }
     if (activities.mobilePay) {
-      mpUsed = Math.min(Math.max(y.mobilePaySpend, 0), CONSTANTS.MP_CAP_RMB);
+      mpUsed = Math.min(Math.max(toSafeNumber(y.mobilePaySpend), 0), CONSTANTS.MP_CAP_RMB);
       rcMobile = mpUsed * CONSTANTS.MP_RATE;
     }
-    if (activities.dining && y.diningSpend > 0) {
-      diningUsed = Math.min(Math.max(y.diningSpend, 0), CONSTANTS.DINING_YEARLY_CAP_SPEND);
+    if (activities.dining && toSafeNumber(y.diningSpend) > 0) {
+      const diningSpend = toSafeNumber(y.diningSpend);
+      diningUsed = Math.min(Math.max(diningSpend, 0), CONSTANTS.DINING_YEARLY_CAP_SPEND);
       const avgTotal = totalSpend / 12;
-      const avgDining = y.diningSpend / 12;
+      const avgDining = diningSpend / 12;
       if (y.forceThreshold || avgTotal >= CONSTANTS.DINING_THRESHOLD_RMB) {
-         rcDiningPending =
-           (Math.min(avgDining * CONSTANTS.DINING_A_RATE, CONSTANTS.DINING_A_CAP) +
-             Math.min(avgDining * CONSTANTS.DINING_B_RATE, CONSTANTS.DINING_B_CAP)) *
-           12;
+        rcDiningPending =
+          (Math.min(avgDining * CONSTANTS.DINING_A_RATE, CONSTANTS.DINING_A_CAP) +
+            Math.min(avgDining * CONSTANTS.DINING_B_RATE, CONSTANTS.DINING_B_CAP)) *
+          12;
       }
     }
   }
+
   const rcDiningIncluded = includePendingDining ? rcDiningPending : 0;
   totalRc = rcBase + rcRyc + rcMobile + rcDiningIncluded;
+
   return {
+    calcMode: 'estimate',
     totalRc,
     totalSpend,
     rcBase,
     rcRyc,
     rcMobile,
     rcDiningPending,
+    rcDiningPendingRaw: rcDiningPending,
     rcDiningIncluded,
     includePendingDining,
     rycUsed,
     mpUsed,
     diningUsed,
+    baseCarry: 0,
+    rycCarry: 0,
+    mpCarry: 0,
     asiaMiles: totalRc * CONSTANTS.RC_TO_ASIAMILES,
     returnRate: totalSpend > 0 ? (totalRc / totalSpend) * 100 : 0,
   };
+};
+
+const calculateReconcile = (mode, activities, inputData, options = {}) => {
+  const includePendingDining = Boolean(options.includePendingDining);
+  const rows = mode === 'monthly' ? sortMonthlyRows(inputData) : toSyntheticMonthlyRows(inputData);
+
+  let totalSpend = 0;
+  let rcBase = 0;
+  let rcRyc = 0;
+  let rcMobile = 0;
+  let rcDiningPendingRaw = 0;
+  let rycUsed = 0;
+  let mpUsed = 0;
+  let diningUsed = 0;
+  let baseCarry = 0;
+  let rycCarry = 0;
+  let mpCarry = 0;
+
+  rows.forEach((m) => {
+    const monthTotal = toSafeNumber(m.totalSpend);
+    const monthMobile = toSafeNumber(m.mobilePaySpend);
+    const monthDining = toSafeNumber(m.diningSpend);
+    totalSpend += monthTotal;
+
+    const baseSettlement = settleDiscreteRc(
+      baseCarry,
+      monthTotal,
+      CONSTANTS.RC_UNIT_SPEND,
+      CONSTANTS.BASE_RC_PER_UNIT
+    );
+    rcBase += baseSettlement.rc;
+    baseCarry = baseSettlement.nextCarry;
+
+    if (activities.ryc) {
+      const rycEligible = applySignedSpendCap(monthTotal, rycUsed, CONSTANTS.RYC_CAP_RMB);
+      const rycSettlement = settleDiscreteRc(
+        rycCarry,
+        rycEligible.appliedSpend,
+        CONSTANTS.RC_UNIT_SPEND,
+        CONSTANTS.EXTRA_RC_PER_UNIT
+      );
+      rcRyc += rycSettlement.rc;
+      rycCarry = rycSettlement.nextCarry;
+      rycUsed = rycEligible.nextUsed;
+    }
+
+    if (activities.mobilePay) {
+      const mobileEligible = applySignedSpendCap(monthMobile, mpUsed, CONSTANTS.MP_CAP_RMB);
+      const mobileSettlement = settleDiscreteRc(
+        mpCarry,
+        mobileEligible.appliedSpend,
+        CONSTANTS.RC_UNIT_SPEND,
+        CONSTANTS.EXTRA_RC_PER_UNIT
+      );
+      rcMobile += mobileSettlement.rc;
+      mpCarry = mobileSettlement.nextCarry;
+      mpUsed = mobileEligible.nextUsed;
+    }
+
+    if (activities.dining && monthDining !== 0) {
+      const thresholdPassed = Boolean(m.forceThreshold) || monthTotal >= CONSTANTS.DINING_THRESHOLD_RMB;
+      const positiveDining = Math.min(Math.max(monthDining, 0), CONSTANTS.DINING_MONTHLY_CAP_SPEND);
+      const negativeDining = Math.min(monthDining, 0);
+      let eligibleDiningSpend = (thresholdPassed ? positiveDining : 0) + negativeDining;
+
+      if (eligibleDiningSpend > 0) {
+        const remainingDining = Math.max(0, CONSTANTS.DINING_YEARLY_CAP_SPEND - diningUsed);
+        eligibleDiningSpend = Math.min(eligibleDiningSpend, remainingDining);
+        diningUsed += eligibleDiningSpend;
+      } else if (eligibleDiningSpend < 0) {
+        const reducible = Math.min(-eligibleDiningSpend, diningUsed);
+        eligibleDiningSpend = -reducible;
+        diningUsed += eligibleDiningSpend;
+      }
+
+      rcDiningPendingRaw +=
+        eligibleDiningSpend * CONSTANTS.DINING_A_RATE +
+        eligibleDiningSpend * CONSTANTS.DINING_B_RATE;
+    }
+  });
+
+  if (mode === 'yearly') {
+    totalSpend = toSafeNumber(inputData?.totalSpend);
+  }
+
+  const rcDiningPending = activities.dining ? roundDiningPromotionRc(rcDiningPendingRaw) : 0;
+  const rcDiningIncluded = includePendingDining ? rcDiningPending : 0;
+  const totalRc = rcBase + rcRyc + rcMobile + rcDiningIncluded;
+
+  return {
+    calcMode: 'reconcile',
+    totalRc,
+    totalSpend,
+    rcBase,
+    rcRyc,
+    rcMobile,
+    rcDiningPending,
+    rcDiningPendingRaw,
+    rcDiningIncluded,
+    includePendingDining,
+    rycUsed,
+    mpUsed,
+    diningUsed,
+    baseCarry,
+    rycCarry,
+    mpCarry,
+    asiaMiles: totalRc * CONSTANTS.RC_TO_ASIAMILES,
+    returnRate: totalSpend > 0 ? (totalRc / totalSpend) * 100 : 0,
+  };
+};
+
+function calculate(mode, activities, inputData, options = {}) {
+  const calcMode = options.calcMode === 'estimate' ? 'estimate' : 'reconcile';
+  if (calcMode === 'estimate') {
+    return calculateEstimate(mode, activities, inputData, options);
+  }
+  return calculateReconcile(mode, activities, inputData, options);
 }
 
 export default function PulseLiquidFixed() {
   const [activeTab, setActiveTab] = useState('monthly');
   const [activities, setActivities] = useState({ ryc: true, mobilePay: true, dining: true });
   const [includePendingDining, setIncludePendingDining] = useState(false);
+  const [calcMode, setCalcMode] = useState(() => {
+    try {
+      return localStorage.getItem('pulse-calc-mode') || 'reconcile';
+    } catch {
+      return 'reconcile';
+    }
+  });
   const [themeMode, setThemeMode] = useState(() => {
     try {
       return localStorage.getItem('pulse-theme-mode') || 'system';
@@ -781,9 +1002,9 @@ export default function PulseLiquidFixed() {
         activeTab,
         activities,
         activeTab === 'monthly' ? months : yearly,
-        { includePendingDining }
+        { includePendingDining, calcMode }
       ),
-    [activeTab, activities, months, yearly, includePendingDining]
+    [activeTab, activities, months, yearly, includePendingDining, calcMode]
   );
 
   const addMonth = () => setMonths([...months, { id: Date.now(), monthKey: '', totalSpend: 0, mobilePaySpend: 0, diningSpend: 0 }]);
@@ -821,6 +1042,14 @@ export default function PulseLiquidFixed() {
 
     return undefined;
   }, [themeMode]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('pulse-calc-mode', calcMode);
+    } catch (error) {
+      void error;
+    }
+  }, [calcMode]);
 
   useEffect(() => {
     try {
@@ -882,6 +1111,14 @@ export default function PulseLiquidFixed() {
                 </button>
               ))}
             </div>
+            <select
+              value={calcMode}
+              onChange={(event) => setCalcMode(event.target.value)}
+              className="rounded-full px-3 py-2 text-[10px] md:text-xs font-bold bg-white/80 dark:bg-black/40 border border-white/40 dark:border-white/10 text-gray-600 dark:text-gray-200 backdrop-blur-md"
+            >
+              <option value="reconcile">对账模式</option>
+              <option value="estimate">估算模式</option>
+            </select>
             <select
               value={themeMode}
               onChange={(event) => setThemeMode(event.target.value)}
@@ -1005,8 +1242,15 @@ export default function PulseLiquidFixed() {
              
              <div className="relative z-10 grid grid-cols-1 lg:grid-cols-2 gap-10 md:gap-16">
                <div className="flex flex-col justify-between">
-                  <div className="space-y-4">
-                    <div className="text-gray-500 text-[10px] md:text-xs font-bold uppercase tracking-[0.2em] mb-4">Total Estimated Rewards</div>
+                 <div className="space-y-4">
+                    <div className="text-gray-500 text-[10px] md:text-xs font-bold uppercase tracking-[0.2em] mb-4">
+                      {calcMode === 'reconcile' ? 'Total Reconciled Rewards' : 'Total Estimated Rewards'}
+                    </div>
+                    <div className="text-[10px] text-gray-500">
+                      {calcMode === 'reconcile'
+                        ? '对账模式：Base/RYC/移动支付按每 RMB 250 阶梯计 RC；餐饮按活动期汇总取整。'
+                        : '估算模式：沿用连续百分比估算，便于快速粗算。'}
+                    </div>
                     {activities.dining && (
                       <div className="text-[10px] text-gray-500">
                         {includePendingDining ? '已计入待定餐饮 RC' : '未计入待定餐饮 RC（默认）'}
@@ -1048,7 +1292,15 @@ export default function PulseLiquidFixed() {
                         <Toggle checked={includePendingDining} onChange={setIncludePendingDining} />
                       </div>
                       <div className="text-[10px] text-gray-500 leading-relaxed">
-                        默认不计入总 RC。打开开关后将把待定餐饮 RC 纳入总收益估算。
+                        默认不计入总 RC。对账模式下按活动期汇总后取整（向上取整），并作为延后入账估算。
+                      </div>
+                      {calcMode === 'reconcile' && (
+                        <div className="text-[10px] text-gray-500 leading-relaxed">
+                          原始值 {result.rcDiningPendingRaw.toFixed(2)} RC，活动期取整后 {result.rcDiningPending.toFixed(0)} RC。
+                        </div>
+                      )}
+                      <div className="text-[10px] text-gray-500 leading-relaxed">
+                        打开开关后会把该待定值并入总 RC。
                       </div>
                     </div>
                   )}
