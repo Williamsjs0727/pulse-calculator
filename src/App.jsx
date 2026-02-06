@@ -694,6 +694,12 @@ const sortMonthlyRows = (inputData) => {
       totalSpend: toSafeNumber(row.totalSpend),
       mobilePaySpend: toSafeNumber(row.mobilePaySpend),
       diningSpend: toSafeNumber(row.diningSpend),
+      totalRefundSpend: toSafeNumber(row.totalRefundSpend),
+      mobileRefundSpend: toSafeNumber(row.mobileRefundSpend),
+      diningRefundSpend: toSafeNumber(row.diningRefundSpend),
+      pendingBaseClawback: toSafeNumber(row.pendingBaseClawback),
+      pendingRycClawback: toSafeNumber(row.pendingRycClawback),
+      pendingMobileClawback: toSafeNumber(row.pendingMobileClawback),
       __index: index,
     }))
     .sort((a, b) => {
@@ -709,6 +715,8 @@ const toSyntheticMonthlyRows = (yearlyData) => {
   const yearlyTotal = toSafeNumber(yearlyData?.totalSpend);
   const yearlyMobile = toSafeNumber(yearlyData?.mobilePaySpend);
   const yearlyDining = toSafeNumber(yearlyData?.diningSpend);
+  const yearlyTotalRefund = toSafeNumber(yearlyData?.totalRefundSpend);
+  const yearlyMobileRefund = toSafeNumber(yearlyData?.mobileRefundSpend);
   const forceThreshold = Boolean(yearlyData?.forceThreshold);
 
   return Array.from({ length: monthCount }, (_, index) => ({
@@ -716,6 +724,8 @@ const toSyntheticMonthlyRows = (yearlyData) => {
     totalSpend: yearlyTotal / monthCount,
     mobilePaySpend: yearlyMobile / monthCount,
     diningSpend: yearlyDining / monthCount,
+    totalRefundSpend: yearlyTotalRefund / monthCount,
+    mobileRefundSpend: yearlyMobileRefund / monthCount,
     forceThreshold,
     __index: index,
   }));
@@ -796,7 +806,10 @@ const calculateEstimate = (mode, activities, inputData, options = {}) => {
     });
   } else {
     const y = inputData;
-    totalSpend = toSafeNumber(y.totalSpend);
+    totalSpend = toSafeNumber(
+      y.totalNetSpend ??
+      (toSafeNumber(y.totalSpend) - toSafeNumber(y.totalRefundSpend))
+    );
     rcBase = totalSpend * CONSTANTS.BASE_RATE;
 
     if (activities.ryc) {
@@ -804,7 +817,11 @@ const calculateEstimate = (mode, activities, inputData, options = {}) => {
       rcRyc = rycUsed * CONSTANTS.RYC_RATE;
     }
     if (activities.mobilePay) {
-      mpUsed = Math.min(Math.max(toSafeNumber(y.mobilePaySpend), 0), CONSTANTS.MP_CAP_RMB);
+      const yearlyMobileNet = toSafeNumber(
+        y.mobileNetSpend ??
+        (toSafeNumber(y.mobilePaySpend) - toSafeNumber(y.mobileRefundSpend))
+      );
+      mpUsed = Math.min(Math.max(yearlyMobileNet, 0), CONSTANTS.MP_CAP_RMB);
       rcMobile = mpUsed * CONSTANTS.MP_RATE;
     }
     if (activities.dining && toSafeNumber(y.diningSpend) > 0) {
@@ -1004,10 +1021,26 @@ const createMonthRecord = (id = Date.now()) => ({
   pendingMobileClawback: 0,
 });
 
+const createYearlyRecord = () => ({
+  totalSpend: 0,
+  mobilePaySpend: 0,
+  diningSpend: 0,
+  totalRefundSpend: 0,
+  mobileRefundSpend: 0,
+  forceThreshold: true,
+});
+
 export default function PulseLiquidFixed() {
   const [activeTab, setActiveTab] = useState('monthly');
   const [activities, setActivities] = useState({ ryc: true, mobilePay: true, dining: true });
   const [includePendingDining, setIncludePendingDining] = useState(false);
+  const [deductPendingClawback, setDeductPendingClawback] = useState(() => {
+    try {
+      return localStorage.getItem('pulse-deduct-pending-clawback') === '1';
+    } catch {
+      return false;
+    }
+  });
   const [calcMode, setCalcMode] = useState(() => {
     try {
       return localStorage.getItem('pulse-calc-mode') || 'reconcile';
@@ -1024,7 +1057,7 @@ export default function PulseLiquidFixed() {
   });
   const [resolvedTheme, setResolvedTheme] = useState('light');
   const [months, setMonths] = useState([createMonthRecord(1)]);
-  const [yearly, setYearly] = useState({ totalSpend: 0, mobilePaySpend: 0, diningSpend: 0, forceThreshold: true });
+  const [yearly, setYearly] = useState(createYearlyRecord());
 
   const result = useMemo(
     () =>
@@ -1053,6 +1086,10 @@ export default function PulseLiquidFixed() {
     setActiveTab('monthly');
   };
 
+  const displayedTotalRc = result.totalRc - (deductPendingClawback ? result.pendingClawbackTotal : 0);
+  const displayedAsiaMiles = displayedTotalRc * CONSTANTS.RC_TO_ASIAMILES;
+  const displayedReturnRate = result.totalSpend > 0 ? (displayedTotalRc / result.totalSpend) * 100 : 0;
+
   useEffect(() => {
     const matcher = window.matchMedia('(prefers-color-scheme: dark)');
 
@@ -1080,6 +1117,14 @@ export default function PulseLiquidFixed() {
       void error;
     }
   }, [calcMode]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('pulse-deduct-pending-clawback', deductPendingClawback ? '1' : '0');
+    } catch (error) {
+      void error;
+    }
+  }, [deductPendingClawback]);
 
   useEffect(() => {
     try {
@@ -1113,24 +1158,24 @@ export default function PulseLiquidFixed() {
 
       {/* 悬浮导航栏 */}
       <nav className="fixed top-4 md:top-6 left-0 right-0 z-50 px-4 flex justify-center">
-        <div className="bg-white/70 dark:bg-gray-900/70 backdrop-blur-2xl rounded-full shadow-[0_10px_40px_-10px_rgba(0,0,0,0.1)] border border-white/40 dark:border-white/10 pl-4 pr-1.5 py-1.5 md:pl-6 md:pr-2 md:py-2 flex items-center gap-3 md:gap-6 w-full max-w-[360px] md:max-w-max justify-between md:justify-start transition-all duration-300">
-          <div className="flex items-center gap-2">
+        <div className="bg-white/70 dark:bg-gray-900/70 backdrop-blur-2xl rounded-[1.4rem] md:rounded-full shadow-[0_10px_40px_-10px_rgba(0,0,0,0.1)] border border-white/40 dark:border-white/10 px-3 py-2 md:pl-6 md:pr-2 md:py-2 flex flex-col md:flex-row items-stretch md:items-center gap-2 md:gap-6 w-full max-w-[390px] md:max-w-max transition-all duration-300">
+          <div className="flex items-center gap-2 min-w-0">
             <div className="w-7 h-7 md:w-8 md:h-8 rounded-full bg-black dark:bg-white flex items-center justify-center text-white dark:text-black shadow-lg">
                <div className="scale-75"><Icons.Diamond /></div>
             </div>
-            <span className="font-bold text-sm md:text-lg tracking-tight text-gray-900 dark:text-white">
+            <span className="font-bold text-sm md:text-lg tracking-tight text-gray-900 dark:text-white leading-tight">
               HSBC Pulse <span className="text-[#db0011] dark:text-[#ff4d4d]">Calculator</span>
             </span>
           </div>
           
-          <div className="flex items-center gap-2">
-            <div className="bg-gray-100/50 dark:bg-white/10 p-1 rounded-full flex backdrop-blur-md">
+          <div className="flex items-center gap-1.5 w-full md:w-auto">
+            <div className="bg-gray-100/50 dark:bg-white/10 p-1 rounded-full flex backdrop-blur-md flex-1 md:flex-none">
               {['monthly', 'yearly'].map(t => (
                 <button 
                   key={t} 
                   onClick={() => setActiveTab(t)} 
                   className={`
-                    px-4 py-1.5 md:px-6 md:py-2.5 rounded-full text-[10px] md:text-xs font-bold transition-all duration-300
+                    flex-1 md:flex-none px-2.5 py-1.5 md:px-6 md:py-2.5 rounded-full text-[10px] md:text-xs font-bold transition-all duration-300
                     ${activeTab === t 
                       ? 'bg-white dark:bg-gray-800 text-black dark:text-white shadow-[0_4px_12px_rgba(0,0,0,0.08)]' 
                       : 'text-gray-400 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-200'
@@ -1144,15 +1189,15 @@ export default function PulseLiquidFixed() {
             <select
               value={calcMode}
               onChange={(event) => setCalcMode(event.target.value)}
-              className="rounded-full px-3 py-2 text-[10px] md:text-xs font-bold bg-white/80 dark:bg-black/40 border border-white/40 dark:border-white/10 text-gray-600 dark:text-gray-200 backdrop-blur-md"
+              className="rounded-full px-2.5 py-2 text-[10px] md:text-xs font-bold bg-white/80 dark:bg-black/40 border border-white/40 dark:border-white/10 text-gray-600 dark:text-gray-200 backdrop-blur-md w-[92px] md:w-auto"
             >
-              <option value="reconcile">对账模式</option>
-              <option value="estimate">估算模式</option>
+              <option value="reconcile">对账</option>
+              <option value="estimate">估算</option>
             </select>
             <select
               value={themeMode}
               onChange={(event) => setThemeMode(event.target.value)}
-              className="rounded-full px-3 py-2 text-[10px] md:text-xs font-bold bg-white/80 dark:bg-black/40 border border-white/40 dark:border-white/10 text-gray-600 dark:text-gray-200 backdrop-blur-md"
+              className="rounded-full px-2.5 py-2 text-[10px] md:text-xs font-bold bg-white/80 dark:bg-black/40 border border-white/40 dark:border-white/10 text-gray-600 dark:text-gray-200 backdrop-blur-md w-[78px] md:w-auto"
             >
               <option value="system">自动</option>
               <option value="light">浅色</option>
@@ -1162,7 +1207,7 @@ export default function PulseLiquidFixed() {
         </div>
       </nav>
 
-      <main className="relative z-10 max-w-4xl mx-auto px-4 pt-28 md:pt-32 space-y-8 md:space-y-12">
+      <main className="relative z-10 max-w-4xl mx-auto px-4 pt-40 md:pt-32 space-y-8 md:space-y-12">
         
         {/* 卡片区 */}
         <section className="animate-in fade-in slide-in-from-bottom-6 duration-700">
@@ -1207,10 +1252,27 @@ export default function PulseLiquidFixed() {
                            </span>
                            <button onClick={() => removeMonth(m.id)} className="text-gray-300 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400 transition-colors p-2"><Icons.Trash /></button>
                         </div>
-                        <div className="grid grid-cols-1 md:grid-cols-10 gap-4 md:gap-6">
-                           <div className="md:col-span-4"><LiquidInput label="当月总消费" value={m.totalSpend} onChange={v => updateMonth(m.id, 'totalSpend', v)} /></div>
-                           <div className="md:col-span-3"><LiquidInput label="餐饮消费" subLabel={activities.dining ? "封顶2k" : null} disabled={!activities.dining} value={m.diningSpend} onChange={v => updateMonth(m.id, 'diningSpend', v)} /></div>
-                           <div className="md:col-span-3"><LiquidInput label="移动支付" subLabel={activities.mobilePay ? "封顶8w" : null} disabled={!activities.mobilePay} value={m.mobilePaySpend} onChange={v => updateMonth(m.id, 'mobilePaySpend', v)} /></div>
+                        <div className="space-y-4 md:space-y-5">
+                          <div className="grid grid-cols-1 md:grid-cols-10 gap-4 md:gap-6">
+                             <div className="md:col-span-4"><LiquidInput label="当月总消费" value={m.totalSpend} onChange={v => updateMonth(m.id, 'totalSpend', v)} /></div>
+                             <div className="md:col-span-3"><LiquidInput label="餐饮消费" subLabel={activities.dining ? "封顶2k" : null} disabled={!activities.dining} value={m.diningSpend} onChange={v => updateMonth(m.id, 'diningSpend', v)} /></div>
+                             <div className="md:col-span-3"><LiquidInput label="移动支付" subLabel={activities.mobilePay ? "封顶8w" : null} disabled={!activities.mobilePay} value={m.mobilePaySpend} onChange={v => updateMonth(m.id, 'mobilePaySpend', v)} /></div>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+                            <LiquidInput
+                              label="当月退款"
+                              subLabel="用于待扣回"
+                              value={m.totalRefundSpend}
+                              onChange={v => updateMonth(m.id, 'totalRefundSpend', v)}
+                            />
+                            <LiquidInput
+                              label="移动退款"
+                              subLabel={activities.mobilePay ? "用于Mobile待扣回" : null}
+                              disabled={!activities.mobilePay}
+                              value={m.mobileRefundSpend}
+                              onChange={v => updateMonth(m.id, 'mobileRefundSpend', v)}
+                            />
+                          </div>
                         </div>
                      </div>
                   </div>
@@ -1229,6 +1291,22 @@ export default function PulseLiquidFixed() {
                
                <div className="space-y-6 md:space-y-8">
                   <LiquidInput label="全年总消费" value={yearly.totalSpend} onChange={v => setYearly({...yearly, totalSpend: v})} />
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
+                     <LiquidInput
+                       label="全年总退款"
+                       subLabel="用于待扣回"
+                       value={yearly.totalRefundSpend}
+                       onChange={v => setYearly({...yearly, totalRefundSpend: v})}
+                     />
+                     <LiquidInput
+                       label="全年移动退款"
+                       subLabel={activities.mobilePay ? "用于Mobile待扣回" : null}
+                       disabled={!activities.mobilePay}
+                       value={yearly.mobileRefundSpend}
+                       onChange={v => setYearly({...yearly, mobileRefundSpend: v})}
+                     />
+                  </div>
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
                      <LiquidInput label="移动/二维码" subLabel="年限80,000" disabled={!activities.mobilePay} value={yearly.mobilePaySpend} onChange={v => setYearly({...yearly, mobilePaySpend: v})} />
@@ -1286,19 +1364,24 @@ export default function PulseLiquidFixed() {
                         {includePendingDining ? '已计入待定餐饮 RC' : '未计入待定餐饮 RC（默认）'}
                       </div>
                     )}
+                    {calcMode === 'reconcile' && result.pendingClawbackTotal > 0 && (
+                      <div className="text-[10px] text-gray-500">
+                        {deductPendingClawback ? '总 RC 已扣除待扣回值' : '总 RC 目前未扣除待扣回值'}
+                      </div>
+                    )}
                     <div className="flex items-baseline gap-2 md:gap-3 flex-wrap">
-                       <span className="text-6xl md:text-8xl font-bold tracking-tighter text-white">{result.totalRc.toFixed(0)}</span>
-                       <span className="text-2xl md:text-3xl text-gray-600 font-light tracking-tight">.{result.totalRc.toFixed(2).split('.')[1]} <span className="text-lg md:text-xl font-bold text-gray-700">RC</span></span>
+                       <span className="text-6xl md:text-8xl font-bold tracking-tighter text-white">{displayedTotalRc.toFixed(0)}</span>
+                       <span className="text-2xl md:text-3xl text-gray-600 font-light tracking-tight">.{displayedTotalRc.toFixed(2).split('.')[1]} <span className="text-lg md:text-xl font-bold text-gray-700">RC</span></span>
                     </div>
                   </div>
                   
                   <div className="grid grid-cols-2 gap-4 md:gap-6 mt-8 md:mt-12 lg:mt-0">
                      <div className="p-4 md:p-6 rounded-2xl md:rounded-[2rem] bg-white/5 backdrop-blur-sm hover:bg-white/10 transition-colors">
-                       <div className="text-xl md:text-3xl font-bold tracking-tight text-gray-100">{result.asiaMiles.toLocaleString()}</div>
+                       <div className="text-xl md:text-3xl font-bold tracking-tight text-gray-100">{displayedAsiaMiles.toLocaleString()}</div>
                        <div className="text-[9px] md:text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-2">Asia Miles</div>
                      </div>
                      <div className="p-4 md:p-6 rounded-2xl md:rounded-[2rem] bg-white/5 backdrop-blur-sm hover:bg-white/10 transition-colors">
-                       <div className="text-xl md:text-3xl font-bold tracking-tight text-gray-100">{result.returnRate.toFixed(2)}%</div>
+                       <div className="text-xl md:text-3xl font-bold tracking-tight text-gray-100">{displayedReturnRate.toFixed(2)}%</div>
                        <div className="text-[9px] md:text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-2">Return Rate</div>
                      </div>
                   </div>
@@ -1336,8 +1419,16 @@ export default function PulseLiquidFixed() {
                   )}
                   {calcMode === 'reconcile' && result.pendingClawbackTotal > 0 && (
                     <div className="rounded-2xl bg-amber-500/10 border border-amber-300/20 px-4 py-4 space-y-3">
-                      <div className="text-[10px] uppercase tracking-widest text-amber-300">
-                        待扣回 RC（不影响当前 Earned）
+                      <div className="flex items-center justify-between gap-4">
+                        <div>
+                          <div className="text-[10px] uppercase tracking-widest text-amber-300">
+                            待扣回 RC
+                          </div>
+                          <div className="text-[10px] text-amber-100/80">
+                            默认关闭；开启后总 RC 会减去待扣回数量。
+                          </div>
+                        </div>
+                        <Toggle checked={deductPendingClawback} onChange={setDeductPendingClawback} />
                       </div>
                       <div className="grid grid-cols-4 gap-3 text-[10px] text-amber-100 font-mono">
                         <div>Base<br/><span className="text-sm font-bold">{result.pendingBaseClawback}</span></div>
