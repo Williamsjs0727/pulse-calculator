@@ -129,6 +129,27 @@ const safeString = (value) => {
   return String(value).trim();
 };
 
+const sourceRootKey = (sourceId) =>
+  safeString(sourceId).replace(/-ocr-(lines|text)$/i, '');
+
+const sourceLabel = (sourceId) => {
+  const root = sourceRootKey(sourceId);
+  if (!root) return '未知来源';
+  if (root === 'text') return '粘贴文本';
+  if (root === 'csv') return 'CSV 文本';
+  if (root === 'pdf') return 'PDF';
+  if (root === 'image') return '截图';
+
+  const match = root.match(/^([a-z]+)-(\d+)-/i);
+  if (match) {
+    const type = match[1].toUpperCase();
+    const index = Number(match[2]) + 1;
+    return `${type} #${index}`;
+  }
+
+  return root.length > 24 ? `${root.slice(0, 24)}...` : root;
+};
+
 const normalizeOcrConfusions = (text) =>
   safeString(text)
     .toUpperCase()
@@ -1207,7 +1228,7 @@ const sourceQualityScore = (rows) => {
 
 const removeOverlappingScreenshotMatches = (sourceMap) => {
   const sourceIds = Array.from(sourceMap.keys());
-  if (sourceIds.length <= 1) return { sourceMap, removedCount: 0 };
+  if (sourceIds.length <= 1) return { sourceMap, removedCount: 0, pairMatches: [] };
 
   const sourceRowsMap = new Map();
   sourceIds.forEach((sourceId) => {
@@ -1226,6 +1247,7 @@ const removeOverlappingScreenshotMatches = (sourceMap) => {
   });
 
   const removedIds = new Set();
+  const pairMatches = [];
 
   for (let i = 0; i < sourceIds.length; i += 1) {
     for (let j = i + 1; j < sourceIds.length; j += 1) {
@@ -1264,10 +1286,26 @@ const removeOverlappingScreenshotMatches = (sourceMap) => {
           removedIds.add(txB.id);
         }
       });
+
+      pairMatches.push({
+        sourceA: sourceLabel(sourceA),
+        sourceB: sourceLabel(sourceB),
+        sourceARoot: sourceRootKey(sourceA),
+        sourceBRoot: sourceRootKey(sourceB),
+        matchedCount: matches.length,
+        overlapRatio: Number((overlapRatio * 100).toFixed(1)),
+        removedSource: sourceLabel(dropSource),
+        samples: matches.slice(0, 3).map(([txA]) => ({
+          date: txDayKey(txA) || txMonthKey(txA),
+          description: txA.description,
+          amount: Math.abs(txA.signedSpendImpact || 0),
+          isRefund: Boolean(txA.isRefund),
+        })),
+      });
     }
   }
 
-  if (!removedIds.size) return { sourceMap, removedCount: 0 };
+  if (!removedIds.size) return { sourceMap, removedCount: 0, pairMatches };
 
   const filtered = new Map();
   sourceIds.forEach((sourceId) => {
@@ -1281,7 +1319,136 @@ const removeOverlappingScreenshotMatches = (sourceMap) => {
   return {
     sourceMap: filtered,
     removedCount: removedIds.size,
+    pairMatches,
   };
+};
+
+const dedupeCrossSourceNearMatches = (rows) => {
+  const buckets = new Map();
+
+  rows.forEach((tx) => {
+    const signKey = tx.isRefund ? 'R' : 'S';
+    const amountKey = amountToKey(tx.signedSpendImpact);
+    const month = txMonthKey(tx);
+    const key = `${month || 'UNKNOWN'}|${amountKey}|${signKey}`;
+    const list = buckets.get(key) || [];
+    list.push(tx);
+    buckets.set(key, list);
+  });
+
+  const deduped = [];
+  let removedCount = 0;
+  const groups = [];
+
+  buckets.forEach((list) => {
+    if (list.length <= 1) {
+      deduped.push(...list);
+      return;
+    }
+
+    const sorted = [...list].sort((a, b) => {
+      const scoreDiff = qualityScore(b) - qualityScore(a);
+      if (scoreDiff !== 0) return scoreDiff;
+      return a.__importOrder - b.__importOrder;
+    });
+
+    const clusters = [];
+    sorted.forEach((tx) => {
+      let target = null;
+      for (const cluster of clusters) {
+        const sameAsCluster = cluster.items.some((item) => likelySameTransaction(tx, item));
+        if (sameAsCluster) {
+          target = cluster;
+          break;
+        }
+      }
+
+      if (!target) {
+        target = { items: [] };
+        clusters.push(target);
+      }
+      target.items.push(tx);
+    });
+
+    clusters.forEach((cluster) => {
+      if (cluster.items.length <= 1) {
+        deduped.push(...cluster.items);
+        return;
+      }
+
+      const countByRoot = new Map();
+      cluster.items.forEach((tx) => {
+        const root = sourceRootKey(tx.source || 'unknown');
+        countByRoot.set(root, (countByRoot.get(root) || 0) + 1);
+      });
+
+      if (countByRoot.size <= 1) {
+        deduped.push(...cluster.items);
+        return;
+      }
+
+      const keepCount = Math.max(...Array.from(countByRoot.values()));
+      const ordered = [...cluster.items].sort((a, b) => {
+        const scoreDiff = qualityScore(b) - qualityScore(a);
+        if (scoreDiff !== 0) return scoreDiff;
+        return a.__importOrder - b.__importOrder;
+      });
+
+      const kept = ordered.slice(0, keepCount);
+      deduped.push(...kept);
+
+      const removed = Math.max(0, ordered.length - keepCount);
+      removedCount += removed;
+
+      if (removed > 0) {
+        groups.push({
+          roots: Array.from(countByRoot.keys()).map((root) => sourceLabel(root)),
+          total: ordered.length,
+          kept: keepCount,
+          removed,
+          sample: {
+            date: txDayKey(ordered[0]) || txMonthKey(ordered[0]),
+            description: ordered[0].description,
+            amount: Math.abs(ordered[0].signedSpendImpact || 0),
+            isRefund: Boolean(ordered[0].isRefund),
+          },
+        });
+      }
+    });
+  });
+
+  return { deduped, removedCount, groups };
+};
+
+const buildSourceSummary = (beforeRows, afterRows) => {
+  const aggregate = (rows) => {
+    const map = new Map();
+    rows.forEach((tx) => {
+      const root = sourceRootKey(tx.source || 'unknown');
+      const current = map.get(root) || { root, label: sourceLabel(root), count: 0 };
+      current.count += 1;
+      map.set(root, current);
+    });
+    return map;
+  };
+
+  const before = aggregate(beforeRows);
+  const after = aggregate(afterRows);
+  const roots = new Set([...before.keys(), ...after.keys()]);
+
+  return Array.from(roots)
+    .map((root) => {
+      const inCount = before.get(root)?.count || 0;
+      const outCount = after.get(root)?.count || 0;
+      return {
+        root,
+        label: sourceLabel(root),
+        inputCount: inCount,
+        keptCount: outCount,
+        removedCount: Math.max(0, inCount - outCount),
+      };
+    })
+    .sort((a, b) => b.inputCount - a.inputCount);
 };
 
 const overlapCount = (mapA, mapB) => {
@@ -1415,10 +1582,22 @@ const clusterRowsInsideBucket = (rows) => {
 
 const dedupeTransactions = (transactions) => {
   if (transactions.length <= 1) {
-    return { deduped: transactions, duplicateCount: 0 };
+    return {
+      deduped: transactions,
+      duplicateCount: 0,
+      report: {
+        sourceSummary: buildSourceSummary(transactions, transactions),
+        overlapPairs: [],
+        nearDuplicateGroups: [],
+        overlapRemovedCount: 0,
+        exactRemovedCount: 0,
+        nearRemovedCount: 0,
+      },
+    };
   }
 
   const withOrder = transactions.map((tx, order) => ({ ...tx, __importOrder: order }));
+  const beforeDedupeRows = [...withOrder];
   let sourceMap = new Map();
   withOrder.forEach((tx) => {
     const sourceId = tx.source || 'unknown';
@@ -1430,19 +1609,29 @@ const dedupeTransactions = (transactions) => {
   const overlapPrune = removeOverlappingScreenshotMatches(sourceMap);
   sourceMap = overlapPrune.sourceMap;
   sourceMap = new Map(Array.from(sourceMap.entries()).filter(([, rows]) => (rows || []).length > 0));
+  let exactRemovedCount = 0;
 
   const sourceIds = Array.from(sourceMap.keys());
   if (sourceIds.length <= 1) {
     const rows = sourceIds.length ? sourceMap.get(sourceIds[0]) || [] : [];
-    return {
-      deduped: rows
-        .sort((a, b) => a.__importOrder - b.__importOrder)
-        .map((item) => {
+    const normalizedRows = rows
+      .sort((a, b) => a.__importOrder - b.__importOrder)
+      .map((item) => {
         const cleaned = { ...item };
         delete cleaned.__importOrder;
         return cleaned;
-      }),
+      });
+    return {
+      deduped: normalizedRows,
       duplicateCount: overlapPrune.removedCount,
+      report: {
+        sourceSummary: buildSourceSummary(beforeDedupeRows, normalizedRows),
+        overlapPairs: overlapPrune.pairMatches || [],
+        nearDuplicateGroups: [],
+        overlapRemovedCount: overlapPrune.removedCount,
+        exactRemovedCount: 0,
+        nearRemovedCount: 0,
+      },
     };
   }
 
@@ -1539,19 +1728,27 @@ const dedupeTransactions = (transactions) => {
         });
 
         componentRows.push(...sorted.slice(0, keepCount));
-        duplicateCount += Math.max(0, sorted.length - keepCount);
+        const removed = Math.max(0, sorted.length - keepCount);
+        duplicateCount += removed;
+        exactRemovedCount += removed;
       });
     });
 
     const crossSourcePass = dedupeAcrossSourcesBySignature(componentRows);
     deduped.push(...crossSourcePass.deduped);
     duplicateCount += crossSourcePass.removedCount;
+    exactRemovedCount += crossSourcePass.removedCount;
   });
 
   const fallbackCrossSourcePass = dedupeAcrossSourcesBySignature(deduped);
   duplicateCount += fallbackCrossSourcePass.removedCount;
+  exactRemovedCount += fallbackCrossSourcePass.removedCount;
 
-  const normalized = fallbackCrossSourcePass.deduped
+  const nearPass = dedupeCrossSourceNearMatches(fallbackCrossSourcePass.deduped);
+  duplicateCount += nearPass.removedCount;
+  const nearRemovedCount = nearPass.removedCount;
+
+  const normalized = nearPass.deduped
     .sort((a, b) => a.__importOrder - b.__importOrder)
     .map((item) => {
       const cleaned = { ...item };
@@ -1559,7 +1756,18 @@ const dedupeTransactions = (transactions) => {
       return cleaned;
     });
 
-  return { deduped: normalized, duplicateCount };
+  return {
+    deduped: normalized,
+    duplicateCount,
+    report: {
+      sourceSummary: buildSourceSummary(beforeDedupeRows, normalized),
+      overlapPairs: overlapPrune.pairMatches || [],
+      nearDuplicateGroups: nearPass.groups || [],
+      overlapRemovedCount: overlapPrune.removedCount,
+      exactRemovedCount,
+      nearRemovedCount,
+    },
+  };
 };
 
 const linkRefundsWithOriginalSpend = (transactions) => {
@@ -1625,13 +1833,14 @@ const linkRefundsWithOriginalSpend = (transactions) => {
 };
 
 export const prepareImportedTransactions = (transactions) => {
-  const { deduped, duplicateCount } = dedupeTransactions(transactions);
+  const { deduped, duplicateCount, report } = dedupeTransactions(transactions);
   const { linkedTransactions, matchedRefundCount } = linkRefundsWithOriginalSpend(deduped);
 
   return {
     transactions: linkedTransactions,
     duplicateCount,
     matchedRefundCount,
+    report,
   };
 };
 

@@ -290,6 +290,7 @@ const SmartImportPanel = ({ onReplaceMonths, onAppendMonths }) => {
   const [rawText, setRawText] = useState('');
   const [statusText, setStatusText] = useState('');
   const [errorText, setErrorText] = useState('');
+  const [importReport, setImportReport] = useState(null);
   const [isImporting, setIsImporting] = useState(false);
   const [showAllForReview, setShowAllForReview] = useState(false);
   const fileInputRef = useRef(null);
@@ -350,6 +351,7 @@ const SmartImportPanel = ({ onReplaceMonths, onAppendMonths }) => {
   const importTransactions = async (loader, sourceLabel) => {
     setIsImporting(true);
     setErrorText('');
+    setImportReport(null);
     setStatusText(`${sourceLabel} 识别中，请稍候...`);
 
     try {
@@ -357,15 +359,18 @@ const SmartImportPanel = ({ onReplaceMonths, onAppendMonths }) => {
       if (!rawParsed.length) {
         setStatusText('');
         setErrorText('未识别到有效交易，请优先使用 CSV，或在下方粘贴文本后再试。');
+        setImportReport(null);
         return;
       }
       const prepared = prepareImportedTransactions(rawParsed);
       const parsed = prepared.transactions;
       setTransactions(parsed);
+      setImportReport(prepared.report || null);
       const uncertainCount = parsed.filter((tx) => tx.needsReview).length;
 
       const extra = [];
       if (prepared.duplicateCount > 0) extra.push(`自动排重 ${prepared.duplicateCount} 笔`);
+      if ((prepared.report?.nearRemovedCount || 0) > 0) extra.push(`近似排重 ${prepared.report.nearRemovedCount} 笔`);
       if (prepared.matchedRefundCount > 0) extra.push(`匹配退款 ${prepared.matchedRefundCount} 笔`);
 
       setStatusText(
@@ -431,6 +436,7 @@ const SmartImportPanel = ({ onReplaceMonths, onAppendMonths }) => {
   const handleRawTextImport = () => {
     if (!rawText.trim()) {
       setErrorText('请先粘贴 statement 文本。');
+      setImportReport(null);
       return;
     }
 
@@ -443,10 +449,12 @@ const SmartImportPanel = ({ onReplaceMonths, onAppendMonths }) => {
     }
 
     setTransactions(parsed);
+    setImportReport(prepared.report || null);
     setErrorText('');
     const uncertainCount = parsed.filter((tx) => tx.needsReview).length;
     const extra = [];
     if (prepared.duplicateCount > 0) extra.push(`自动排重 ${prepared.duplicateCount} 笔`);
+    if ((prepared.report?.nearRemovedCount || 0) > 0) extra.push(`近似排重 ${prepared.report.nearRemovedCount} 笔`);
     if (prepared.matchedRefundCount > 0) extra.push(`匹配退款 ${prepared.matchedRefundCount} 笔`);
     setStatusText(
       `文本识别完成：${parsed.length} 笔交易，需复审 ${uncertainCount} 笔${
@@ -541,6 +549,93 @@ const SmartImportPanel = ({ onReplaceMonths, onAppendMonths }) => {
       {(statusText || errorText) && (
         <div className={`rounded-2xl px-4 py-3 text-sm ${errorText ? 'bg-red-50/80 dark:bg-red-900/20 text-red-600 dark:text-red-300' : 'bg-green-50/80 dark:bg-green-900/20 text-green-700 dark:text-green-300'}`}>
           {errorText || statusText}
+        </div>
+      )}
+
+      {importReport && (
+        <div className="rounded-2xl border border-white/30 dark:border-white/10 bg-white/45 dark:bg-white/[0.04] px-4 py-4 space-y-4">
+          <div className="text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">
+            重叠识别报告（截图级）
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+            <div className="rounded-xl bg-white/60 dark:bg-black/20 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-widest text-gray-500 dark:text-gray-400">重叠排重</div>
+              <div className="font-mono font-bold text-emerald-600 dark:text-emerald-300">{importReport.overlapRemovedCount || 0}</div>
+            </div>
+            <div className="rounded-xl bg-white/60 dark:bg-black/20 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-widest text-gray-500 dark:text-gray-400">精确排重</div>
+              <div className="font-mono font-bold text-blue-600 dark:text-blue-300">{importReport.exactRemovedCount || 0}</div>
+            </div>
+            <div className="rounded-xl bg-white/60 dark:bg-black/20 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-widest text-gray-500 dark:text-gray-400">近似排重</div>
+              <div className="font-mono font-bold text-violet-600 dark:text-violet-300">{importReport.nearRemovedCount || 0}</div>
+            </div>
+            <div className="rounded-xl bg-white/60 dark:bg-black/20 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-widest text-gray-500 dark:text-gray-400">来源数量</div>
+              <div className="font-mono font-bold text-gray-700 dark:text-gray-200">{(importReport.sourceSummary || []).length}</div>
+            </div>
+          </div>
+
+          {(importReport.sourceSummary || []).length > 0 && (
+            <div className="space-y-2">
+              <div className="text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">每张截图明细</div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {importReport.sourceSummary.map((source) => (
+                  <div key={source.root} className="rounded-xl border border-white/30 dark:border-white/10 bg-white/60 dark:bg-black/20 px-3 py-2 text-sm">
+                    <div className="font-semibold text-gray-700 dark:text-gray-200">{source.label}</div>
+                    <div className="text-[12px] text-gray-500 dark:text-gray-400 font-mono">
+                      输入 {source.inputCount} 笔 / 保留 {source.keptCount} 笔 / 排重 {source.removedCount} 笔
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {(importReport.overlapPairs || []).length > 0 && (
+            <div className="space-y-2">
+              <div className="text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">重叠区匹配</div>
+              <div className="space-y-2">
+                {importReport.overlapPairs.map((pair, idx) => (
+                  <div key={`${pair.sourceARoot}-${pair.sourceBRoot}-${idx}`} className="rounded-xl border border-emerald-200/40 dark:border-emerald-400/20 bg-emerald-50/40 dark:bg-emerald-900/10 px-3 py-2">
+                    <div className="text-sm text-emerald-800 dark:text-emerald-200">
+                      {pair.sourceA} ↔ {pair.sourceB}：匹配 {pair.matchedCount} 笔（重叠 {pair.overlapRatio}%），已优先移除 {pair.removedSource} 的重复项。
+                    </div>
+                    {(pair.samples || []).length > 0 && (
+                      <div className="mt-1 text-[11px] text-emerald-900/80 dark:text-emerald-100/80 space-y-0.5">
+                        {pair.samples.map((sample, sampleIdx) => (
+                          <div key={`${pair.sourceARoot}-${sampleIdx}`}>
+                            {sample.date || '未知日期'} | {sample.description} | {sample.isRefund ? '+' : '-'}
+                            {sample.amount?.toLocaleString?.() ?? sample.amount}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {(importReport.nearDuplicateGroups || []).length > 0 && (
+            <div className="space-y-2">
+              <div className="text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">近似重复命中</div>
+              <div className="space-y-2">
+                {importReport.nearDuplicateGroups.slice(0, 6).map((group, idx) => (
+                  <div key={`near-${idx}`} className="rounded-xl border border-violet-200/40 dark:border-violet-400/20 bg-violet-50/40 dark:bg-violet-900/10 px-3 py-2 text-[12px]">
+                    <div className="text-violet-800 dark:text-violet-200">
+                      {group.sample?.date || '未知日期'} | {group.sample?.description} | {group.sample?.isRefund ? '+' : '-'}
+                      {group.sample?.amount?.toLocaleString?.() ?? group.sample?.amount}
+                    </div>
+                    <div className="text-violet-700/80 dark:text-violet-200/80 font-mono">
+                      来源：{(group.roots || []).join(' / ')}，共 {group.total} 笔，保留 {group.kept} 笔，去重 {group.removed} 笔
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
