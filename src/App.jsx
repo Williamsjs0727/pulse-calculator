@@ -1198,7 +1198,7 @@ export default function PulseLiquidFixed() {
 
       {/* 悬浮导航栏 */}
       <nav className="fixed top-4 md:top-6 left-0 right-0 z-50 px-4 flex justify-center">
-        <div className="bg-white/70 dark:bg-gray-900/70 backdrop-blur-2xl rounded-[1.4rem] md:rounded-full shadow-[0_10px_40px_-10px_rgba(0,0,0,0.1)] border border-white/40 dark:border-white/10 px-3 py-2 md:px-5 md:py-2.5 flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-3 w-full max-w-[360px] md:max-w-[980px] transition-all duration-300">
+        <div className="bg-white/70 dark:bg-gray-900/70 backdrop-blur-2xl rounded-[1.4rem] md:rounded-full shadow-[0_10px_40px_-10px_rgba(0,0,0,0.1)] border border-white/40 dark:border-white/10 px-3 py-2 md:px-5 md:py-2.5 flex flex-col md:flex-row md:items-center md:justify-between gap-2 md:gap-3 w-full max-w-[328px] md:max-w-[980px] transition-all duration-300">
           <div className="flex items-center justify-center md:justify-start gap-2 min-w-0 w-full md:w-auto">
             <div className="w-7 h-7 md:w-8 md:h-8 rounded-full bg-black dark:bg-white flex items-center justify-center text-white dark:text-black shadow-lg">
                <div className="scale-75"><Icons.Diamond /></div>
@@ -1265,7 +1265,7 @@ export default function PulseLiquidFixed() {
         </div>
       </nav>
 
-      <main className="relative z-10 max-w-4xl mx-auto px-4 pt-40 md:pt-32 space-y-8 md:space-y-12">
+      <main className="relative z-10 max-w-4xl mx-auto px-4 pt-44 md:pt-32 space-y-8 md:space-y-12">
         
         {/* 卡片区 */}
         <section className="animate-in fade-in slide-in-from-bottom-6 duration-700">
@@ -1484,8 +1484,18 @@ export default function PulseLiquidFixed() {
              <div className="relative z-10 grid grid-cols-1 lg:grid-cols-2 gap-10 md:gap-16">
                <div className="flex flex-col gap-8">
                  <div className="space-y-4">
-                    <div className="text-gray-400 text-base md:text-xl font-bold tracking-tight mb-3">
-                      {calcMode === 'reconcile' ? '总奖励（对账） Total Reconciled Rewards' : '总奖励（估算） Total Estimated Rewards'}
+                    <div className="text-gray-400 text-base md:text-xl font-bold tracking-tight mb-3 leading-snug">
+                      {calcMode === 'reconcile' ? (
+                        <>
+                          <span className="block">总奖励（对账）</span>
+                          <span className="block whitespace-nowrap">Total Reconciled Rewards</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="block">总奖励（估算）</span>
+                          <span className="block whitespace-nowrap">Total Estimated Rewards</span>
+                        </>
+                      )}
                     </div>
                     <div className="text-[10px] text-gray-500">
                       {calcMode === 'reconcile'
