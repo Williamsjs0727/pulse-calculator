@@ -1172,12 +1172,6 @@ export default function PulseLiquidFixed() {
   }, [deductPendingClawback]);
 
   useEffect(() => {
-    if (!activities.mobilePay) {
-      setActivities((prev) => ({ ...prev, mobilePay: true }));
-    }
-  }, [activities.mobilePay]);
-
-  useEffect(() => {
     try {
       localStorage.setItem('pulse-theme-mode', themeMode);
     } catch (error) {
